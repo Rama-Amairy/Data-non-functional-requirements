@@ -12,7 +12,7 @@ from src.lifespan import lifespan
 def create_app() -> FastAPI:
     """Creates and wires the application object."""
     application = FastAPI(
-        title="منصة الاختبارات — مشروع الموثوقية",
+        title="منصة الاختبارات",
         description=(
             "An online exam platform demonstrating the Recoverability "
             "requirement: client-side autosave and server-side durability."
