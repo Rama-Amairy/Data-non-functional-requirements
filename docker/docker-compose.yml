@@ -3,7 +3,7 @@ services:
     image: bitnamilegacy/etcd:3.5.9-debian-11-r99
     environment:
       # Allow etcd to run without auth for local development/testing
-      - ALLOW_NONE_AUTHENTICATION=yes
+      - ALLOW_NONE_AUTHENTICATION=yes # Dervops/ Close Networks
       - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
     networks:
       - pg_network
@@ -11,13 +11,16 @@ services:
   pg_node_1:
     image: bitnamilegacy/postgresql-repmgr:16.6.0-debian-12-r3
     environment:
-      # Database credentials
-      - POSTGRESQL_POSTGRES_PASSWORD=admin_password
-      - POSTGRESQL_USERNAME=custom_user
-      - POSTGRESQL_PASSWORD=user_password
-      - POSTGRESQL_DATABASE=app_db
+      # Database credentials — from docker/.env (git-ignored), see
+      # docker/.env.example. The ":?err" form fails the deploy loudly
+      # instead of silently starting with an empty/weak password if the
+      # file is missing.
+      - POSTGRESQL_POSTGRES_PASSWORD=${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in docker/.env}
+      - POSTGRESQL_USERNAME=${APP_DB_USER:?Set APP_DB_USER in docker/.env}
+      - POSTGRESQL_PASSWORD=${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in docker/.env}
+      - POSTGRESQL_DATABASE=${APP_DB_NAME:?Set APP_DB_NAME in docker/.env}
       # Replication and HA settings
-      - REPMGR_PASSWORD=repmgr_password
+      - REPMGR_PASSWORD=${REPMGR_PASSWORD:?Set REPMGR_PASSWORD in docker/.env}
       - REPMGR_PARTNER_NODES=pg_node_1,pg_node_2
       - REPMGR_PRIMARY_HOST=pg_node_1
       - REPMGR_NODE_NETWORK_NAME=pg_node_1
@@ -41,11 +44,11 @@ services:
   pg_node_2:
     image: bitnamilegacy/postgresql-repmgr:16.6.0-debian-12-r3
     environment:
-      - POSTGRESQL_POSTGRES_PASSWORD=admin_password
-      - POSTGRESQL_USERNAME=custom_user
-      - POSTGRESQL_PASSWORD=user_password
-      - POSTGRESQL_DATABASE=app_db
-      - REPMGR_PASSWORD=repmgr_password
+      - POSTGRESQL_POSTGRES_PASSWORD=${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in docker/.env}
+      - POSTGRESQL_USERNAME=${APP_DB_USER:?Set APP_DB_USER in docker/.env}
+      - POSTGRESQL_PASSWORD=${APP_DB_PASSWORD:?Set APP_DB_PASSWORD in docker/.env}
+      - POSTGRESQL_DATABASE=${APP_DB_NAME:?Set APP_DB_NAME in docker/.env}
+      - REPMGR_PASSWORD=${REPMGR_PASSWORD:?Set REPMGR_PASSWORD in docker/.env}
       - REPMGR_PARTNER_NODES=pg_node_1,pg_node_2
       - REPMGR_PRIMARY_HOST=pg_node_1
       - REPMGR_NODE_NETWORK_NAME=pg_node_2

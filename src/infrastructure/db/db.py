@@ -58,6 +58,16 @@ class DatabaseManager:
             connection.execute(select(1))
         return True
 
+    def create_db_and_tables(self) -> None:
+        """Creates all tables registered on Base.metadata (idempotent).
+
+        Imported here, not at module level, to avoid a circular import:
+        the model modules import Base from this package.
+        """
+        import src.domain.models  # noqa: F401  registers tables on Base.metadata
+
+        Base.metadata.create_all(bind=self.engine)
+
     @contextmanager
     def session(self) -> Generator[Session, None, None]:
         """Context manager to handle session commit, rollback, and closing automatically.

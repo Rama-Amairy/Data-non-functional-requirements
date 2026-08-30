@@ -51,9 +51,12 @@ Browser (UI/) ──HTTP──> FastAPI app (src/) ──SQLAlchemy/psycopg2─�
 | `UI/` | Static front end (autosave, offline handling, a/b comparison dashboard) |
 | `alembic/`, `alembic.ini` | Database migrations |
 | `docker/docker-compose.yml` | The 2-node PostgreSQL + repmgr + etcd cluster |
+| `docker/.env.example` | Template for `docker/.env` — the cluster's credentials (`docker/.env` itself is git-ignored) |
 | `docker/config/` | `postgresql.conf` / `pg_hba.conf` overrides mounted into the cluster |
 | `scripts/enable-sync-replication.sh` | One-time step to turn on synchronous replication |
 | `scripts/repmgr-cluster-show.sh` | Wrapper to run `repmgr cluster show` from the host |
+| `scripts/backup-db.sh` | Physical (`pg_basebackup`) + logical (`pg_dumpall`) backup of the primary |
+| `scripts/restore-db.sh` | Restores a backup into a disposable container and verifies the data is there |
 | `scripts/server/` | Equivalent conf files for a **native** (non-Docker) PostgreSQL install |
 | `.env.example` | Template for `.env` (copy it, `.env` itself is git-ignored) |
 
@@ -64,11 +67,16 @@ Browser (UI/) ──HTTP──> FastAPI app (src/) ──SQLAlchemy/psycopg2─�
 | 1 | PostgreSQL streaming replication between two nodes | `docker/docker-compose.yml`, repmgr-managed | ✅ done, tested |
 | 2 | WAL configuration to protect against transaction loss | `wal_level=replica` + synchronous replication (`scripts/enable-sync-replication.sh`) | ✅ done, tested |
 | 3 | Automatic failover | `repmgrd` running on both nodes, monitors and self-promotes | ✅ done, tested |
-| 4 | Backup with pgBackRest + recovery test | — | ⬜ not started yet |
+| 4 | Backup + recovery test | `scripts/backup-db.sh` (physical + logical) / `scripts/restore-db.sh` | ✅ done, tested |
 
 repmgr was chosen over Patroni/pg_auto_failover as the failover manager — it satisfies the
 same requirement (automatic promotion, no manual step) with less moving infrastructure.
 See the "Known gaps" section for what's left.
+
+Note on the architecture diagram above: the `etcd` container is currently **not** wired
+into repmgr — repmgr keeps its own cluster metadata (`repmgr.nodes`, `repmgr.events`) in a
+`repmgr` database replicated between the two PostgreSQL nodes themselves, not in etcd.
+`etcd` runs alongside the cluster but repmgr never talks to it.
 
 ## Prerequisites (any machine)
 
@@ -114,6 +122,16 @@ cd Data-non-functional-requirements
 
 ### 3. Bring up the PostgreSQL HA cluster
 
+The cluster's credentials (admin password, app db user/password/name, repmgr's shared
+password) are not hardcoded in `docker-compose.yml` — they're read from `docker/.env`
+(git-ignored, never committed). Create it first:
+
+```bash
+cp docker/.env.example docker/.env
+# then edit docker/.env and set real passwords — docker compose will refuse to
+# start (with a clear error naming the missing variable) if this file is absent
+```
+
 ```bash
 cd docker
 docker compose up -d
@@ -147,9 +165,10 @@ You should see `node-1` as `primary` and `node-2` as `standby`, both `running`.
 cp .env.example .env
 ```
 
-Edit `.env` so the database credentials match `docker/docker-compose.yml` (the compose
-file uses `custom_user` / `user_password` / database `app_db`, and exposes the primary on
-host port `5434`, the standby on `5433`):
+Edit `.env` so the database credentials match whatever you put in `docker/.env` in step 3
+(`APP_DB_USER` / `APP_DB_PASSWORD` / `APP_DB_NAME`) — the example below uses this README's
+placeholder values (`custom_user` / `user_password` / `app_db`). The primary is exposed on
+host port `5434`, the standby on `5433`:
 
 ```dotenv
 DB_USER=custom_user
@@ -345,6 +364,58 @@ sleep 15
 ./scripts/repmgr-cluster-show.sh docker-pg_node_2-1   # node-1 should now show as standby
 ```
 
+### HA test 4 — backup and recovery
+
+```bash
+./scripts/backup-db.sh                 # backs up docker-pg_node_1-1 by default
+ls backups/                            # one timestamped directory per run
+
+./scripts/restore-db.sh                # restores the newest backup (physical mode)
+./scripts/restore-db.sh --logical      # or: restore the pg_dumpall instead
+```
+
+Both restore modes spin up a throwaway container + volume (`pg_restore_verify`, port
+`5555`) — they never touch `pg_node_1`/`pg_node_2` — load the backup into it, and print a
+row-count query so you can see the data actually came back. Tear the disposable resources
+down afterwards with the `docker rm`/`docker volume rm`/`docker network rm` commands the
+script prints at the end.
+
+## Backup and recovery
+
+`scripts/backup-db.sh` takes two artifacts from the current primary on every run, into
+`backups/<UTC timestamp>/`:
+
+- `base.tar.gz` — a physical base backup (`pg_basebackup -Ft -z -X fetch`). This is a
+  byte-for-byte copy of the data directory plus the WAL needed to reach a consistent state,
+  so extracting it and starting PostgreSQL on it recovers the whole cluster (all databases,
+  roles, and this app's data) as of the backup time.
+- `dumpall.sql.gz` — a logical backup (`pg_dumpall`), plain SQL. Slower to restore on a
+  large database, but human-readable and portable across PostgreSQL versions — a good
+  sanity-check artifact even when the physical backup is what you'd actually restore from
+  in an emergency.
+
+`scripts/restore-db.sh` proves those backups are actually restorable, without risking the
+live cluster: it restores into a disposable container/volume/network (all named
+`pg_restore_verify*`), starts PostgreSQL on the result, and runs a verification query. This
+is the "recovery test" this project's non-functional requirements call for.
+
+By default it restores the **newest** backup in `backups/`; pass a specific timestamp
+(the directory name under `backups/`) to restore an older one, e.g.
+`./scripts/restore-db.sh 20260830T125641Z`.
+
+**Restoring onto a live cluster node is deliberately not automated.** Overwriting
+`pg_node_1`'s or `pg_node_2`'s actual data directory is destructive, and afterwards the
+node also needs to be re-registered with repmgr (`repmgr standby clone` / node rejoin) —
+that's a reviewed, hands-on operation you'd do with `docker cp`/`docker exec` using the same
+`base.tar.gz`, not something to run unattended.
+
+**Retention:** `backup-db.sh` keeps the newest 7 backup directories by default and deletes
+older ones; override with `BACKUP_KEEP=<n>` (or `BACKUP_KEEP=0` to disable pruning) and
+`BACKUP_ROOT=<path>` to change where backups are written. Nothing currently schedules
+`backup-db.sh` automatically — run it by hand or add it to cron/systemd-timer for real use.
+`backups/` is local disk on whichever host runs the script; for real disaster recovery it
+should be copied off-host (e.g. to object storage) — not done here.
+
 ## Why synchronous replication is a separate step
 
 `docker/config/postgresql.conf` deliberately does **not** set `synchronous_standby_names`.
@@ -385,7 +456,15 @@ compose file's credentials and ports (step 4 above), and that
 
 ## Known gaps / next steps
 
-- **Backup with pgBackRest + a recovery test** (requirement 4) is not implemented yet.
+- **Backup/recovery today is `pg_basebackup` + `pg_dumpall` via `scripts/backup-db.sh` /
+  `scripts/restore-db.sh`**, not pgBackRest. That covers the requirement (backup + a tested
+  recovery path) but lacks pgBackRest's incremental backups, retention policies, and
+  built-in WAL archiving/PITR — worth swapping in later if backup windows or storage become
+  a real concern.
+- Nothing schedules `backup-db.sh` automatically (no cron/systemd timer yet), and backups
+  are only ever written to local disk on whichever host runs it — not shipped off-host.
+- `etcd` runs in `docker-compose.yml` but isn't actually used by repmgr (see the
+  architecture note above) — it's either vestigial or reserved for future use.
 - `scripts/server/` holds equivalent `postgresql.conf`/`pg_hba.conf` for running PostgreSQL
   natively (no Docker) — this path exists in the repo but hasn't been wired into an install
   script.
