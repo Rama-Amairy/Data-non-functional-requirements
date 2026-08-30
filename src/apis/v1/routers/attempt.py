@@ -105,6 +105,11 @@ def save_answers(
         else:
             skipped += 1
 
+    # Commit before answering: the browser turns this response into
+    # "✓ saved" and stops treating those answers as pending, so the data has
+    # to be durable first.
+    db.commit()
+
     logger.info(
         "autosave: attempt=%s saved=%s skipped=%s", attempt_id, saved, skipped
     )
@@ -131,7 +136,7 @@ def submit_exam(attempt_id: int, db: DbSession) -> ScoreOut:
     if not attempt.is_submitted:
         attempt.is_submitted = True
         attempt.finished_at = datetime.now(timezone.utc)
-        db.flush()
+        db.commit()
         logger.info("attempt %s submitted", attempt_id)
 
     return ScoreOut(

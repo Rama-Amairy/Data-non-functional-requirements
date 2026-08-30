@@ -34,7 +34,13 @@ class DatabaseManager:
         )
         # 2. Configure SessionFactory
         self._session_factory = sessionmaker(
-            autocommit=False, autoflush=False, bind=self.engine
+            autocommit=False,
+            autoflush=False,
+            bind=self.engine,
+            # Endpoints commit explicitly and then keep reading the same
+            # objects to build their response; expiring on commit would send
+            # every one of those attribute reads back to the database.
+            expire_on_commit=False,
         )
 
     def create_db_and_tables(self) -> None:

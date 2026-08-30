@@ -18,7 +18,9 @@ def seed_data(db: DbSession) -> SeedResponse:
     Idempotent: if the data already exists it returns the status
     ``already_seeded`` without writing anything.
     """
-    return SeedResponse(**ensure_demo_data(db))
+    result = ensure_demo_data(db)
+    db.commit()
+    return SeedResponse(**result)
 
 
 @router.get("/{exam_id}", response_model=ExamOut)

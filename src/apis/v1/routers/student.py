@@ -39,6 +39,10 @@ def demo_login(request: DemoLoginRequest, db: DbSession) -> DemoLoginResponse:
     if attempt is None:
         raise HTTPException(500, "تعذّر تجهيز المحاولة التجريبية")
 
+    # The front end fetches the exam as soon as this returns, so the seeded
+    # rows have to be committed before the response leaves.
+    db.commit()
+
     return DemoLoginResponse(
         student_id=student.id,
         student_name=student.name,

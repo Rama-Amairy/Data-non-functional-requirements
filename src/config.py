@@ -39,7 +39,7 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "exam-platform")
+DB_NAME = os.getenv("DB_NAME", "exam_platform")
 
 # All of the above can be overridden with a full URL, which is what we will use
 # in phase two to switch to the replica when the primary server goes down.
