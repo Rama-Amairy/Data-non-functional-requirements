@@ -6,11 +6,13 @@ This file is the heart of the client-side recoverability requirement.
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from src.apis.dependencies import DbSession, get_attempt_or_404
 from src.domain.models import Answer, Exam, Student
 from src.domain.schema import (
+    AnswerSave,
     AttemptAnswersOut,
     BulkSaveRequest,
     SavedAnswerOut,
@@ -121,6 +123,16 @@ def save_answers(
     This rule makes the request safe to resend (idempotent): resending the same
     batch after a network failure does not corrupt the data, and an old batch
     arriving late after the connection returns cannot overwrite a newer answer.
+
+    Both rules are applied by a single ``INSERT ... ON CONFLICT DO UPDATE``
+    rather than by reading each row and then writing it back. Two requests can
+    carry the same answer at the same moment — on ``pagehide`` the browser
+    beacons everything not yet synced, including whatever the in-flight batch is
+    still carrying — and a read followed by a separate write lets both of them
+    find no row and both insert one. The unique key on
+    ``(attempt_id, question_id)`` turns that race into a conflict the database
+    settles by itself, which is what keeps a duplicate row from breaking every
+    later save for the attempt.
     """
     if request.attempt_id != attempt_id:
         # A tab left open from an earlier session would otherwise write one
@@ -131,32 +143,49 @@ def save_answers(
     if attempt.is_submitted:
         raise HTTPException(409, "تم تسليم هذه المحاولة، لا يمكن تعديل الإجابات")
 
-    saved = 0
-    skipped = 0
+    # One batch can name the same question twice — a retry merged with a fresh
+    # answer — and PostgreSQL refuses to let ON CONFLICT touch a row twice in a
+    # single statement. Collapsing them here keeps only the highest version,
+    # which is the one arbitration would have accepted anyway.
+    newest: dict[int, AnswerSave] = {}
     for incoming in request.answers:
-        existing = db.execute(
-            select(Answer).where(
-                Answer.attempt_id == attempt_id,
-                Answer.question_id == incoming.question_id,
-            )
-        ).scalar_one_or_none()
+        current = newest.get(incoming.question_id)
+        if current is None or incoming.version >= current.version:
+            newest[incoming.question_id] = incoming
 
-        if existing is None:
-            db.add(
-                Answer(
-                    attempt_id=attempt_id,
-                    question_id=incoming.question_id,
-                    selected_answer=incoming.selected_answer,
-                    version=incoming.version,
-                )
-            )
-            saved += 1
-        elif incoming.version >= existing.version:
-            existing.selected_answer = incoming.selected_answer
-            existing.version = incoming.version
-            saved += 1
-        else:
-            skipped += 1
+    saved = 0
+    if newest:
+        insert_statement = insert(Answer).values(
+            [
+                {
+                    "attempt_id": attempt_id,
+                    "question_id": incoming.question_id,
+                    "selected_answer": incoming.selected_answer,
+                    "version": incoming.version,
+                }
+                for incoming in newest.values()
+            ]
+        )
+        upsert = insert_statement.on_conflict_do_update(
+            index_elements=["attempt_id", "question_id"],
+            set_={
+                "selected_answer": insert_statement.excluded.selected_answer,
+                "version": insert_statement.excluded.version,
+                # ``onupdate`` only fires for ORM updates, and this is a Core
+                # statement, so the timestamp is bumped explicitly.
+                "updated_at": func.now(),
+            },
+            # An answer older than the stored one loses: the WHERE fails, the
+            # row is left alone and RETURNING does not report it, which is
+            # exactly what ``skipped_count`` counts. COALESCE covers rows
+            # written before ``version`` was always populated — comparing
+            # against NULL would silently reject every save for them.
+            where=func.coalesce(Answer.version, 0) <= insert_statement.excluded.version,
+        ).returning(Answer.question_id)
+
+        saved = len(db.execute(upsert).scalars().all())
+
+    skipped = len(newest) - saved
 
     # Commit before answering: the browser turns this response into
     # "✓ saved" and stops treating those answers as pending, so the data has

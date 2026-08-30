@@ -1,4 +1,13 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from src.infrastructure.db import Base
@@ -65,6 +74,17 @@ class ExamAttempt(Base):
 class Answer(Base):
     """Student answer — the most critical table for recoverability"""
     __tablename__ = "answers"
+
+    # One row per question per attempt. The autosave endpoint leans on this key
+    # to settle the race between the periodic batch and the pagehide beacon,
+    # which deliberately carry the same answer at the same moment: without it
+    # both requests insert a row, and the duplicates then break every later save
+    # for the attempt and inflate its score.
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id", "question_id", name="uq_answers_attempt_question"
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     attempt_id = Column(Integer, ForeignKey("exam_attempts.id"), nullable=False)
