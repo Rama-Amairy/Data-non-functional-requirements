@@ -8,6 +8,13 @@ from src.domain.schema.attempt import (
     SaveResponse,
     ScoreOut,
 )
+from src.domain.schema.cluster import (
+    ClusterOut,
+    FailoverEventOut,
+    NodeActionOut,
+    NodeOut,
+    ReplicaOut,
+)
 from src.domain.schema.exam import (
     ExamOut,
     HealthResponse,
@@ -27,6 +34,11 @@ __all__ = [
     "SaveResponse",
     "SavedAnswerOut",
     "ScoreOut",
+    "ClusterOut",
+    "FailoverEventOut",
+    "NodeActionOut",
+    "NodeOut",
+    "ReplicaOut",
     "ExamOut",
     "HealthResponse",
     "QuestionOut",

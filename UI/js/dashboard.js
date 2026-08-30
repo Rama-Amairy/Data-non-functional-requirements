@@ -1,34 +1,51 @@
 /* The recovery-mechanism measurement dashboard.
  *
  * It runs at /static/dashboard.html on the application's own origin, so it can
- * read /api/v1 directly. Its numbers come from the same IndexedDB events store
- * the exam page writes to, plus a live BroadcastChannel feed that keeps the
- * dashboard moving while the experiment runs in the neighbouring tab.
+ * read /api/v1 directly. Its numbers come from three places:
+ *
+ *   - the IndexedDB events store the exam page writes to, plus a live
+ *     BroadcastChannel feed that keeps the dashboard moving while the
+ *     experiment runs in the neighbouring tab (the client-side half);
+ *   - GET /api/v1/health, polled to measure how long the database is down;
+ *   - GET /api/v1/cluster, polled for replication, WAL, and failover state
+ *     (the server-side half).
+ *
+ * Database outages and failovers are written into the same events store as the
+ * client-side events, so one export contains the whole picture.
  */
 
-import { API_BASE, CFG, CFG_KEY, DEFAULTS } from './config.js';
-import { readEvents, clearEvents, onBusMessage, postBus } from './metrics.js';
+import { API_BASE, CFG_KEY, DEFAULTS } from './config.js';
+import { readEvents, clearEvents, logEvent, onBusMessage, postBus } from './metrics.js';
+import { applyDirection, applyStatic, getLang, locale, onLangChange, setLang, t } from './i18n.js';
 
-/* ---------------------- Knob definitions ---------------------- */
+/* ---------------------- Knob definitions ----------------------
+   Split in two: the values that change what the system does, always visible,
+   and everything else behind a disclosure. Both halves are read and written
+   identically — the split is about attention, not capability. */
 
-const KNOBS = [
-  { key: 'autosaveIntervalMs', label: 'دورة الحفظ التلقائي (م.ث)', type: 'number', min: 500,  step: 500,  live: true,  note: 'RPO ≈ الدورة + زمن الطلب' },
-  { key: 'saveDebounceMs',     label: 'الحفظ بعد آخر نقرة (م.ث)',  type: 'number', min: 0,    step: 100,  live: true,  note: '0 = إرسال فوري' },
-  { key: 'syncingDelayMs',     label: 'تأخير إظهار «جاري المزامنة»', type: 'number', min: 0,  step: 50,   live: true,  note: 'يمنع وميض الحالة' },
-  { key: 'requestTimeoutMs',   label: 'مهلة الطلب (م.ث)',           type: 'number', min: 500,  step: 500,  live: true },
-  { key: 'retryBaseMs',        label: 'أساس التراجع الأسّي (م.ث)',  type: 'number', min: 100,  step: 100,  live: true },
-  { key: 'retryMaxMs',         label: 'سقف الانتظار (م.ث)',         type: 'number', min: 1000, step: 1000, live: true },
-  { key: 'maxRetries',         label: 'أقصى عدد محاولات',            type: 'number', min: 0,    step: 1,    live: true,  note: '0 = بلا حد' },
-  { key: 'healthProbeMs',      label: 'نبض /health (م.ث)',          type: 'number', min: 1000, step: 500,  live: true },
-  { key: 'batchMax',           label: 'أقصى إجابات في الدفعة',       type: 'number', min: 1,    step: 1,    live: true },
-  { key: 'extraLatencyMs',     label: 'تأخير صناعي قبل الحفظ (م.ث)', type: 'number', min: 0,   step: 100,  live: true },
-  { key: 'failRate',           label: 'نسبة الفشل العشوائي (0–1)',   type: 'number', min: 0, max: 1, step: 0.05, live: true },
-  { key: 'storage',            label: 'محرّك التخزين المحلي',        type: 'select', live: false,
-    options: [['indexeddb', 'IndexedDB'], ['localstorage', 'localStorage'], ['memory', 'بلا نسخة محلية']] },
-  { key: 'useAutosave',        label: 'الحفظ التلقائي وإعادة المحاولة', type: 'switch', live: false },
-  { key: 'useOptimistic',      label: 'التحديث التفاؤلي',               type: 'switch', live: false },
-  { key: 'simulateOffline',    label: 'قطع الاتصال (محاكى)',            type: 'switch', live: true },
+const PRIMARY_KNOBS = [
+  { key: 'autosaveIntervalMs', type: 'number', min: 500, step: 500, live: true, note: true },
+  { key: 'storage',            type: 'select', live: false, note: true,
+    options: ['indexeddb', 'localstorage', 'memory'] },
+  { key: 'useAutosave',        type: 'switch', live: false, note: true },
+  { key: 'simulateOffline',    type: 'switch', live: true,  note: true },
+  { key: 'failRate',           type: 'number', min: 0, max: 1, step: 0.05, live: true, note: true },
 ];
+
+const ADVANCED_KNOBS = [
+  { key: 'saveDebounceMs',   type: 'number', min: 0,    step: 100,  live: true, note: true },
+  { key: 'syncingDelayMs',   type: 'number', min: 0,    step: 50,   live: true },
+  { key: 'requestTimeoutMs', type: 'number', min: 500,  step: 500,  live: true },
+  { key: 'retryBaseMs',      type: 'number', min: 100,  step: 100,  live: true },
+  { key: 'retryMaxMs',       type: 'number', min: 1000, step: 1000, live: true },
+  { key: 'maxRetries',       type: 'number', min: 0,    step: 1,    live: true, note: true },
+  { key: 'healthProbeMs',    type: 'number', min: 1000, step: 500,  live: true },
+  { key: 'batchMax',         type: 'number', min: 1,    step: 1,    live: true },
+  { key: 'extraLatencyMs',   type: 'number', min: 0,    step: 100,  live: true },
+  { key: 'useOptimistic',    type: 'switch', live: false },
+];
+
+const KNOBS = [...PRIMARY_KNOBS, ...ADVANCED_KNOBS];
 
 const PRESETS = {
   baseline:  { ...DEFAULTS, useAutosave: false, useOptimistic: false, storage: 'memory', saveDebounceMs: 0 },
@@ -36,16 +53,30 @@ const PRESETS = {
   fast:      { ...DEFAULTS, autosaveIntervalMs: 5000 },
 };
 
+const CLUSTER_POLL_MS = 5000;
+
 const $ = (id) => document.getElementById(id);
 
 let events = [];
 let redrawTimer = null;
 
+/* Latest cluster reading, plus what is needed to turn a sequence of readings
+   into before/after facts: when the database went down, and which failover
+   transitions have already been logged. */
+let cluster = null;
+let health;              // undefined until the first poll answers
+let downSince = null;
+let loggedFailovers = new Set();
+
 /* ---------------------- Boot ---------------------- */
 
 async function boot() {
+  applyDirection();
+  applyStatic();
   renderKnobs();
   wireActions();
+
+  onLangChange(() => { renderKnobs(); redraw(); });
 
   events = await readEvents();
   redraw();
@@ -56,8 +87,8 @@ async function boot() {
     scheduleRedraw();
   });
 
-  pollHealth();
-  setInterval(pollHealth, 5000);
+  poll();
+  setInterval(poll, CLUSTER_POLL_MS);
 }
 
 function scheduleRedraw() {
@@ -69,13 +100,13 @@ function redraw() {
   const current = currentProfile();
   const grouped = groupByProfile(events);
 
-  renderTiles(summarize(grouped[current] || []), current);
-  renderCompare(summarize(grouped.baseline || []), summarize(grouped.protected || []));
+  renderTiles(summarize(grouped[current] || []));
+  renderServerPill();
+  renderCluster();
   renderChart(seriesFrom(events), summarize(events).outages);
+  renderCompare(summarize(grouped.baseline || []), summarize(grouped.protected || []));
   renderLog(events);
-
-  $('pill-profile').textContent = `الملف: ${current === 'protected' ? 'الحماية الكاملة' : 'خط الأساس'}`;
-  $('pill-profile').className = `pill ${current === 'protected' ? 'up' : 'warn'}`;
+  renderProfilePill();
 }
 
 /* ---------------------- Configuration ---------------------- */
@@ -90,63 +121,76 @@ function currentProfile() {
   return (c.useAutosave && c.useOptimistic && c.storage !== 'memory') ? 'protected' : 'baseline';
 }
 
+function renderProfilePill() {
+  const profile = currentProfile();
+  const pill = $('pill-profile');
+  pill.textContent = t('pill.profile', { name: t(`profile.${profile}`) });
+  pill.className = `pill ${profile === 'protected' ? 'up' : 'warn'}`;
+  pill.dataset.profile = profile;
+}
+
+function knobElement(knob, config) {
+  const wrap = document.createElement('div');
+  wrap.className = 'knob' + (knob.type === 'switch' ? ' switch' : '');
+  const id = `k-${knob.key}`;
+  const labelText = t(`k.${knob.key}`);
+
+  if (knob.type === 'switch') {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.id = id;
+    input.checked = Boolean(config[knob.key]);
+    if (knob.live) input.addEventListener('change', () => applyConfig({ silent: true }));
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    row.append(input, label);
+    wrap.appendChild(row);
+  } else if (knob.type === 'select') {
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    const select = document.createElement('select');
+    select.id = id;
+    for (const value of knob.options) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = t(`opt.${value}`);
+      option.selected = config[knob.key] === value;
+      select.appendChild(option);
+    }
+    wrap.append(label, select);
+  } else {
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.id = id;
+    input.value = config[knob.key];
+    if (knob.min !== undefined)  input.min = knob.min;
+    if (knob.max !== undefined)  input.max = knob.max;
+    if (knob.step !== undefined) input.step = knob.step;
+    wrap.append(label, input);
+  }
+
+  if (knob.note) {
+    const note = document.createElement('div');
+    note.className = 'note';
+    note.textContent = t(`k.${knob.key}.n`);
+    wrap.appendChild(note);
+  }
+  return wrap;
+}
+
 function renderKnobs() {
   const config = storedConfig();
-  const box = $('knobs');
-  box.innerHTML = '';
-
-  for (const knob of KNOBS) {
-    const wrap = document.createElement('div');
-    wrap.className = 'knob' + (knob.type === 'switch' ? ' switch' : '');
-
-    if (knob.type === 'switch') {
-      const row = document.createElement('div');
-      row.className = 'row';
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.id = `k-${knob.key}`;
-      input.checked = Boolean(config[knob.key]);
-      if (knob.live) input.addEventListener('change', () => applyConfig({ silent: true }));
-      const label = document.createElement('label');
-      label.htmlFor = input.id;
-      label.textContent = knob.label;
-      row.append(input, label);
-      wrap.appendChild(row);
-    } else if (knob.type === 'select') {
-      const label = document.createElement('label');
-      label.htmlFor = `k-${knob.key}`;
-      label.textContent = knob.label;
-      const select = document.createElement('select');
-      select.id = `k-${knob.key}`;
-      for (const [value, text] of knob.options) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = text;
-        option.selected = config[knob.key] === value;
-        select.appendChild(option);
-      }
-      wrap.append(label, select);
-    } else {
-      const label = document.createElement('label');
-      label.htmlFor = `k-${knob.key}`;
-      label.textContent = knob.label;
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.id = `k-${knob.key}`;
-      input.value = config[knob.key];
-      if (knob.min !== undefined)  input.min = knob.min;
-      if (knob.max !== undefined)  input.max = knob.max;
-      if (knob.step !== undefined) input.step = knob.step;
-      wrap.append(label, input);
-    }
-
-    if (knob.note) {
-      const note = document.createElement('div');
-      note.className = 'note';
-      note.textContent = knob.note;
-      wrap.appendChild(note);
-    }
-    box.appendChild(wrap);
+  for (const [id, list] of [['knobs', PRIMARY_KNOBS], ['knobs-advanced', ADVANCED_KNOBS]]) {
+    const box = $(id);
+    box.innerHTML = '';
+    for (const knob of list) box.appendChild(knobElement(knob, config));
   }
 }
 
@@ -169,7 +213,9 @@ function applyConfig({ silent = false } = {}) {
   const before = storedConfig();
   const patch = readForm();
 
-  localStorage.setItem(CFG_KEY, JSON.stringify(patch));
+  /* Merged, not replaced: a preset may set a value that has no field on the
+     form, and applying afterwards must not silently drop it. */
+  localStorage.setItem(CFG_KEY, JSON.stringify({ ...before, ...patch }));
 
   /* Broadcast the live-changeable values to the exam tab. */
   const live = {};
@@ -180,10 +226,12 @@ function applyConfig({ silent = false } = {}) {
   $('reload-note').classList.toggle('hidden', !structural);
 
   if (!silent) redraw();
-  else $('pill-profile').textContent = `الملف: ${currentProfile() === 'protected' ? 'الحماية الكاملة' : 'خط الأساس'}`;
+  else renderProfilePill();
 }
 
 function wireActions() {
+  $('btn-lang').addEventListener('click', () => setLang(getLang() === 'ar' ? 'en' : 'ar'));
+
   $('btn-apply').addEventListener('click', () => applyConfig());
   $('btn-reset').addEventListener('click', () => {
     localStorage.removeItem(CFG_KEY);
@@ -208,7 +256,8 @@ function wireActions() {
   });
 
   $('btn-export').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(events, null, 2)], { type: 'application/json' });
+    const payload = { exported_at: new Date().toISOString(), cluster, events };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -218,22 +267,85 @@ function wireActions() {
   });
 }
 
+/* ---------------------- Server polling ----------------------
+   The two endpoints are polled together so a database outage and the cluster
+   state it produced always carry the same timestamp. */
+
+async function poll() {
+  await Promise.all([pollHealth(), pollCluster()]);
+  renderServerPill();
+  renderCluster();
+}
+
 async function pollHealth() {
-  const pill = $('pill-server');
   try {
     const res = await fetch(`${API_BASE}/health`);
-    const body = await res.json();
-    if (body.status === 'ok') {
-      pill.textContent = 'الخادم: متصل · القاعدة: تعمل';
-      pill.className = 'pill up';
-    } else {
-      pill.textContent = `الخادم: يعمل · القاعدة: ${body.database}`;
-      pill.className = 'pill warn';
-    }
+    health = await res.json();
   } catch (_) {
-    pill.textContent = 'الخادم: لا يستجيب';
-    pill.className = 'pill down';
+    health = null;
   }
+}
+
+function renderServerPill() {
+  const pill = $('pill-server');
+  if (health === undefined) {
+    pill.textContent = t('pill.server.load');
+    pill.className = 'pill';
+  } else if (health === null) {
+    pill.textContent = t('pill.server.down');
+    pill.className = 'pill down';
+  } else if (health.status === 'ok') {
+    pill.textContent = t('pill.server.ok');
+    pill.className = 'pill up';
+  } else {
+    pill.textContent = t('pill.server.degr', { db: health.database });
+    pill.className = 'pill warn';
+  }
+}
+
+/* Records an event of our own into the same store the exam page writes to, and
+   into the in-memory list — BroadcastChannel does not echo to the sender. */
+function record(type, payload) {
+  logEvent(type, payload).then((event) => {
+    events.push(event);
+    scheduleRedraw();
+  });
+}
+
+async function pollCluster() {
+  let body;
+  try {
+    const res = await fetch(`${API_BASE}/cluster`);
+    body = await res.json();
+  } catch (error) {
+    body = { reachable: false, error: String(error), replicas: [], failovers: [] };
+  }
+
+  /* Downtime: opened on the first unreachable reading, closed on the first
+     reachable one — that difference is the measured RTO of the database. */
+  if (!body.reachable && downSince === null) {
+    downSince = Date.now();
+    record('db_down', { error: body.error || '' });
+  } else if (body.reachable && downSince !== null) {
+    record('db_up', { ms: Date.now() - downSince });
+    downSince = null;
+  }
+
+  for (const failover of body.failovers || []) {
+    const id = `${failover.at}|${failover.to_node}|${failover.to_timeline}`;
+    if (failover.kind === 'first_seen' || loggedFailovers.has(id)) continue;
+    loggedFailovers.add(id);
+    record('failover', {
+      kind: failover.kind,
+      from: nodeLabel(failover.from_node, failover.from_timeline),
+      to: nodeLabel(failover.to_node, failover.to_timeline),
+    });
+  }
+
+  /* An unreachable database keeps the last known cluster picture on screen —
+     blanking it would erase exactly the evidence of what failed. */
+  if (body.reachable || cluster === null) cluster = body;
+  else cluster = { ...cluster, reachable: false, error: body.error, failovers: body.failovers || cluster.failovers };
 }
 
 /* ---------------------- Analysis ---------------------- */
@@ -284,10 +396,10 @@ function summarize(list) {
 
   const durable = [];
   let lost = 0;
-  for (const [questionId, t] of lastSelect) {
-    const hit = delivered.find((e) => e.t >= t && (e.payload.ids || []).includes(questionId));
+  for (const [questionId, t0] of lastSelect) {
+    const hit = delivered.find((e) => e.t >= t0 && (e.payload.ids || []).includes(questionId));
     if (!hit) { lost += 1; continue; }
-    if (hit.type === 'sync_ok') durable.push(hit.t - t);   // durability time from the normal path only
+    if (hit.type === 'sync_ok') durable.push(hit.t - t0);   // durability time from the normal path only
   }
 
   const perceived = local
@@ -337,8 +449,15 @@ const dash = '—';
 
 function ms(value) {
   if (value === null || value === undefined) return dash;
-  if (value < 1000) return `${value < 10 ? value.toFixed(1) : Math.round(value)} م.ث`;
-  return `${(value / 1000).toFixed(1)} ث`;
+  if (value < 1000) return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${t('u.ms')}`;
+  return `${(value / 1000).toFixed(1)} ${t('u.s')}`;
+}
+
+function bytes(value) {
+  if (value === null || value === undefined) return dash;
+  if (value < 1024) return `${Math.round(value)} ${t('u.byte')}`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} ${t('u.kb')}`;
+  return `${(value / (1024 * 1024)).toFixed(1)} ${t('u.mb')}`;
 }
 
 function number(value, digits = 1) {
@@ -346,66 +465,194 @@ function number(value, digits = 1) {
   return value.toFixed(digits);
 }
 
-function clockTime(t) {
-  return new Date(t).toLocaleTimeString('ar-SY', { hour12: false });
+function clockTime(time) {
+  return new Date(time).toLocaleTimeString(locale(), { hour12: false });
 }
 
-/* ---------------------- Metric tiles ---------------------- */
+function nodeLabel(node, timeline) {
+  if (!node) return dash;
+  return timeline === null || timeline === undefined
+    ? node
+    : `${node} · ${t('cl.tl', { n: timeline })}`;
+}
 
-function renderTiles(s, profile) {
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"]/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+}
+
+function tileHtml(tile) {
+  return `
+    <div class="tile ${tile.tone || ''}">
+      <div class="k">${escapeHtml(tile.k)}</div>
+      <div class="v">${escapeHtml(tile.v)}${tile.u ? `<span class="u">${escapeHtml(tile.u)}</span>` : ''}</div>
+      <div class="s">${escapeHtml(tile.s || '')}</div>
+    </div>`;
+}
+
+/* ---------------------- Client metric tiles ---------------------- */
+
+function renderTiles(s) {
   const tiles = [
-    { k: 'إجابات بانتظار المزامنة', v: s.nowDepth, u: '', s: `الأقصى خلال الجلسة: ${s.maxDepth}`,
+    { k: t('tile.pending'), v: s.nowDepth, s: t('tile.pending.s', { max: s.maxDepth }),
       tone: s.nowDepth === 0 ? 'good' : 'warn' },
-    { k: 'إجابات لم تصل الخادم', v: s.lost, u: `من ${s.answers}`, s: 'المقياس الحاسم في المقارنة',
+    { k: t('tile.lost'), v: s.lost, u: t('tile.lost.u', { n: s.answers }), s: t('tile.lost.s'),
       tone: s.lost === 0 ? 'good' : 'bad' },
-    { k: 'زمن الطمأنينة (p50)', v: ms(s.perceivedP50), u: '', s: 'من النقرة إلى «محفوظ على الجهاز»',
-      tone: 'good' },
-    { k: 'زمن المتانة (p50)', v: ms(s.durableP50), u: '', s: `p95: ${ms(s.durableP95)}`, tone: '' },
-    { k: 'أطول زمن تعافٍ', v: ms(s.recovery), u: '', s: `${s.outages.length} انقطاع مسجّل`,
+    { k: t('tile.perceived'), v: ms(s.perceivedP50), s: t('tile.perceived.s'), tone: 'good' },
+    { k: t('tile.durable'), v: ms(s.durableP50), s: t('tile.durable.s', { v: ms(s.durableP95) }) },
+    { k: t('tile.recovery'), v: ms(s.recovery), s: t('tile.recovery.s', { n: s.outages.length }),
       tone: s.recovery === null ? '' : 'warn' },
-    { k: 'طلبات الحفظ', v: s.requests, u: '', tone: '',
-      s: `${s.ok} ناجح · ${s.fail} فاشل · ${number(s.perMinute)} طلب/دقيقة` },
+    { k: t('tile.requests'), v: s.requests,
+      s: t('tile.requests.s', { ok: s.ok, fail: s.fail, rate: number(s.perMinute) }) },
   ];
 
-  $('tiles').innerHTML = tiles.map((tile) => `
-    <div class="tile ${tile.tone}">
-      <div class="k">${tile.k}</div>
-      <div class="v">${tile.v}${tile.u ? `<span class="u">${tile.u}</span>` : ''}</div>
-      <div class="s">${tile.s}</div>
-    </div>`).join('');
-
-  $('pill-profile').dataset.profile = profile;
+  $('tiles').innerHTML = tiles.map(tileHtml).join('');
 }
 
-/* ---------------------- Comparison table ---------------------- */
+/* ---------------------- Cluster: replication, WAL, failover ---------------------- */
 
-function renderCompare(base, prot) {
-  const rows = [
-    ['إجابات لم تصل الخادم', `${base.lost} من ${base.answers}`, `${prot.lost} من ${prot.answers}`, 'less'],
-    ['RPO المقيس (أسوأ حالة)', ms(base.rpo), ms(prot.rpo), 'less'],
-    ['زمن الطمأنينة p50', ms(base.perceivedP50), ms(prot.perceivedP50), 'less'],
-    ['زمن الطمأنينة p95', ms(base.perceivedP95), ms(prot.perceivedP95), 'less'],
-    ['زمن المتانة p50', ms(base.durableP50), ms(prot.durableP50), 'none'],
-    ['زمن المتانة p95', ms(base.durableP95), ms(prot.durableP95), 'none'],
-    ['أطول زمن تعافٍ', ms(base.recovery), ms(prot.recovery), 'none'],
-    ['أقصى عمق للطابور', base.maxDepth, prot.maxDepth, 'none'],
-    ['طلبات ناجحة / فاشلة', `${base.ok} / ${base.fail}`, `${prot.ok} / ${prot.fail}`, 'none'],
-    ['طلبات في الدقيقة', number(base.perMinute), number(prot.perMinute), 'none'],
-    ['أحداث مسجّلة', base.events, prot.events, 'none'],
+function renderCluster() {
+  const banner = $('cluster-banner');
+
+  if (cluster === null) {
+    $('cluster-tiles').innerHTML = '';
+    $('replicas').innerHTML = '';
+    $('failovers').innerHTML = '';
+    banner.classList.add('hidden');
+    return;
+  }
+
+  if (!cluster.reachable) {
+    banner.className = 'banner bad';
+    banner.textContent = t('cl.down', { t: downSince ? ms(Date.now() - downSince) : dash });
+  } else if (cluster.stats_visible === false) {
+    banner.className = 'banner warn';
+    banner.textContent = t('cl.nostats', { user: cluster.db_user || 'app_user' });
+  } else {
+    banner.className = 'banner hidden';
+    banner.textContent = '';
+  }
+
+  const replicas = cluster.replicas || [];
+  const streaming = replicas.filter((r) => r.state === 'streaming');
+  const flushLag = replicas
+    .map((r) => r.flush_lag_bytes)
+    .filter((v) => typeof v === 'number');
+  const worstLag = flushLag.length ? Math.max(...flushLag) : null;
+  const sync = cluster.sync_mode || 'none';
+
+  const dbPill = $('pill-db');
+  dbPill.textContent = `${cluster.role ? t(`cl.role.${cluster.role}`) : dash} · ${t(`cl.sync.${sync}`)}`;
+  dbPill.className = `pill ${!cluster.reachable ? 'down' : (sync === 'sync' ? 'up' : 'warn')}`;
+
+  const tiles = [
+    { k: t('cl.role'), v: cluster.role ? t(`cl.role.${cluster.role}`) : dash,
+      s: t('cl.node', { node: cluster.node || dash }),
+      tone: cluster.role === 'primary' ? 'good' : 'warn' },
+
+    { k: t('cl.wal'), v: cluster.wal_level || dash,
+      s: t('cl.wal.s', { v: cluster.synchronous_commit || dash }),
+      tone: cluster.wal_level === 'replica' || cluster.wal_level === 'logical' ? 'good' : 'bad' },
+
+    { k: t('cl.sync'), v: t(`cl.sync.${sync}`), s: t(`cl.sync.s.${sync}`),
+      tone: sync === 'sync' ? 'good' : (sync === 'async' ? 'warn' : 'bad') },
+
+    { k: t('cl.standbys'), v: streaming.length, s: t('cl.standbys.s', { n: replicas.length }),
+      tone: streaming.length > 0 ? 'good' : 'bad' },
+
+    { k: t('cl.lag'), v: bytes(worstLag), s: t('cl.lag.s'),
+      tone: worstLag === 0 ? 'good' : (worstLag === null ? '' : 'warn') },
+
+    { k: t('cl.timeline'), v: cluster.timeline === null || cluster.timeline === undefined ? dash : cluster.timeline,
+      s: t('cl.timeline.s') },
+
+    { k: t('cl.lsn'), v: cluster.current_lsn || dash, s: cluster.wal_file || '' },
   ];
 
-  $('compare').innerHTML = `
+  $('cluster-tiles').innerHTML = tiles.map(tileHtml).join('');
+  renderReplicas(replicas);
+  renderFailovers(cluster.failovers || []);
+}
+
+function stateLabel(prefix, value) {
+  if (!value) return dash;
+  const key = `${prefix}.${value}`;
+  const label = t(key);
+  return label === key ? value : label;
+}
+
+function renderReplicas(replicas) {
+  const head = `
     <thead>
-      <tr><th>المقياس</th><th>خط الأساس</th><th>الحماية الكاملة</th></tr>
-    </thead>
+      <tr>
+        <th>${t('cl.th.name')}</th><th>${t('cl.th.state')}</th><th>${t('cl.th.sync')}</th>
+        <th>${t('cl.th.sent')}</th><th>${t('cl.th.write')}</th>
+        <th>${t('cl.th.flush')}</th><th>${t('cl.th.replay')}</th>
+      </tr>
+    </thead>`;
+
+  if (!replicas.length) {
+    $('replicas').innerHTML = `${head}<tbody><tr><td class="metric empty" colspan="7">${t('cl.none')}</td></tr></tbody>`;
+    return;
+  }
+
+  $('replicas').innerHTML = `${head}
     <tbody>
-      ${rows.map(([label, a, b]) => `
-        <tr>
-          <td class="metric">${label}</td>
-          <td class="num">${a}</td>
-          <td class="num">${b}</td>
-        </tr>`).join('')}
+      ${replicas.map((replica) => {
+        const streaming = replica.state === 'streaming';
+        const isSync = replica.sync_state === 'sync' || replica.sync_state === 'quorum';
+        return `<tr>
+          <td class="metric">${escapeHtml(replica.name)}${replica.client_addr ? ` <span class="dim">${escapeHtml(replica.client_addr)}</span>` : ''}</td>
+          <td><span class="tag ${streaming ? 'ok' : 'fail'}">${escapeHtml(stateLabel('cl.st', replica.state))}</span></td>
+          <td><span class="tag ${isSync ? 'ok' : ''}">${escapeHtml(stateLabel('cl.sy', replica.sync_state))}</span></td>
+          <td class="num mono">${escapeHtml(replica.sent_lsn || dash)}</td>
+          <td class="num">${bytes(replica.write_lag_bytes)}</td>
+          <td class="num">${bytes(replica.flush_lag_bytes)}</td>
+          <td class="num">${bytes(replica.replay_lag_bytes)}</td>
+        </tr>`;
+      }).join('')}
     </tbody>`;
+}
+
+/* The failover table is the server-side before/after: which node was written
+   to before the transition, which one after it, and how long the gap was. The
+   downtime column is filled from our own db_down/db_up events, matched to the
+   transition they surround. */
+function renderFailovers(list) {
+  const head = `
+    <thead>
+      <tr>
+        <th>${t('cl.fo.th.at')}</th><th>${t('cl.fo.th.kind')}</th>
+        <th>${t('cl.fo.th.before')}</th><th>${t('cl.fo.th.after')}</th>
+        <th>${t('cl.fo.th.down')}</th>
+      </tr>
+    </thead>`;
+
+  const transitions = list.filter((f) => f.kind !== 'first_seen');
+  if (!transitions.length) {
+    $('failovers').innerHTML = `${head}<tbody><tr><td class="metric empty" colspan="5">${t('cl.fo.none')}</td></tr></tbody>`;
+    return;
+  }
+
+  $('failovers').innerHTML = `${head}
+    <tbody>
+      ${transitions.map((failover) => {
+        const at = new Date(failover.at).getTime();
+        return `<tr>
+          <td class="num">${clockTime(at)}</td>
+          <td><span class="tag ${failover.kind === 'promotion' ? 'ok' : ''}">${t(`cl.fo.${failover.kind}`)}</span></td>
+          <td class="metric">${escapeHtml(nodeLabel(failover.from_node, failover.from_timeline))}</td>
+          <td class="metric">${escapeHtml(nodeLabel(failover.to_node, failover.to_timeline))}</td>
+          <td class="num">${ms(downtimeAround(at))}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>`;
+}
+
+/* The db_up event closest after the transition carries the outage it ended. */
+function downtimeAround(time) {
+  const recovery = events.find((e) => e.type === 'db_up' && e.t >= time - CLUSTER_POLL_MS);
+  return recovery ? recovery.payload.ms : null;
 }
 
 /* ---------------------- The chart ----------------------
@@ -422,7 +669,7 @@ function renderChart(points, outages) {
   const wrap = $('chart-wrap');
 
   if (points.length === 0) {
-    wrap.innerHTML = '<div class="chart-empty" id="chart-empty">لا توجد أحداث بعد. افتح الاختبار وأجب عن سؤال.</div>';
+    wrap.innerHTML = `<div class="chart-empty">${t('ch.empty')}</div>`;
     return;
   }
 
@@ -432,7 +679,7 @@ function renderChart(points, outages) {
   const step = Math.max(1, Math.ceil(maxDepth / 4));
   const yMax = step * Math.ceil(maxDepth / step);
 
-  const x = (t) => PAD.left + ((t - t0) / (t1 - t0)) * PLOT_W;
+  const x = (time) => PAD.left + ((time - t0) / (t1 - t0)) * PLOT_W;
   const y = (d) => PAD.top + PLOT_H - (d / yMax) * PLOT_H;
 
   /* A step path: the value holds until the next event. */
@@ -453,10 +700,12 @@ function renderChart(points, outages) {
 
   const xTicks = [];
   for (let i = 0; i <= 4; i += 1) {
-    const t = t0 + ((t1 - t0) * i) / 4;
-    const elapsed = (t - t0) / 1000;
-    const label = elapsed >= 120 ? `${Math.round(elapsed / 60)} د` : `${Math.round(elapsed)} ث`;
-    xTicks.push(`<text class="axis-text" x="${x(t).toFixed(1)}" y="${H - 10}" text-anchor="middle">${label}</text>`);
+    const time = t0 + ((t1 - t0) * i) / 4;
+    const elapsed = (time - t0) / 1000;
+    const label = elapsed >= 120
+      ? `${Math.round(elapsed / 60)} ${t('u.min')}`
+      : `${Math.round(elapsed)} ${t('u.s')}`;
+    xTicks.push(`<text class="axis-text" x="${x(time).toFixed(1)}" y="${H - 10}" text-anchor="middle">${label}</text>`);
   }
 
   const bands = outages.map((outage) => {
@@ -471,8 +720,7 @@ function renderChart(points, outages) {
   const endY = y(last.depth);
 
   wrap.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" role="img"
-         aria-label="عمق طابور الإجابات غير المزامنة عبر زمن الجلسة، مع تظليل فترات تعذّر الوصول إلى الخادم">
+    <svg viewBox="0 0 ${W} ${H}" role="img" dir="ltr" aria-label="${t('ch.alt')}">
       ${bands}
       ${gridLines.join('')}
       <path class="series-area" d="${area}"></path>
@@ -494,8 +742,6 @@ function wireHover(wrap, points, x, y, t0) {
   const crosshair = wrap.querySelector('#crosshair');
   const tip = wrap.querySelector('#chart-tip');
 
-  const LABELS = { saved_local: 'حُفظ على الجهاز', sync_ok: 'وصل الخادم', sync_fail: 'تعذّر الوصول' };
-
   area.addEventListener('mousemove', (event) => {
     const rect = svg.getBoundingClientRect();
     const scale = W / rect.width;
@@ -514,8 +760,8 @@ function wireHover(wrap, points, x, y, t0) {
     crosshair.setAttribute('x2', cx);
     crosshair.classList.remove('hidden');
 
-    tip.innerHTML = `${LABELS[nearest.type] || nearest.type}<br>`
-      + `الطابور: <b>${nearest.depth}</b> · <b>${Math.round((nearest.t - t0) / 1000)}</b> ث · ${clockTime(nearest.t)}`;
+    tip.innerHTML = `${escapeHtml(t(`ev.${nearest.type}`))}<br>`
+      + `${t('ch.tip.queue')}: <b>${nearest.depth}</b> · <b>${Math.round((nearest.t - t0) / 1000)}</b> ${t('u.s')} · ${clockTime(nearest.t)}`;
     tip.style.left = `${(cx / scale)}px`;
     tip.style.top = `${(cy / scale)}px`;
     tip.classList.add('show');
@@ -527,35 +773,98 @@ function wireHover(wrap, points, x, y, t0) {
   });
 }
 
+/* ---------------------- Before / after ----------------------
+   Only the metrics that decide whether the mechanisms earned their place. Each
+   row says which direction is an improvement, and the delta column colours the
+   answer rather than leaving the reader to subtract two numbers. */
+
+function renderCompare(before, after) {
+  const rows = [
+    { label: t('cmp.lost'), unit: 'count', better: 'less',
+      a: before.lost, b: after.lost,
+      fmt: (value, s) => t('cmp.lostv', { lost: value, n: s.answers }) },
+    { label: t('cmp.rpo'),       unit: 'ms',    better: 'less', a: before.rpo,          b: after.rpo,           fmt: ms },
+    { label: t('cmp.recovery'),  unit: 'ms',    better: 'less', a: before.recovery,     b: after.recovery,      fmt: ms },
+    { label: t('cmp.depth'),     unit: 'count', better: 'none', a: before.maxDepth,     b: after.maxDepth,      fmt: (v) => v },
+    { label: t('cmp.perceived'), unit: 'ms',    better: 'less', a: before.perceivedP50, b: after.perceivedP50,  fmt: ms },
+    { label: t('cmp.requests'),  unit: 'count', better: 'none',
+      a: before.ok, b: after.ok,
+      fmt: (value, s) => `${s.ok} / ${s.fail}` },
+  ];
+
+  const missing = (s) => s.events === 0;
+
+  $('compare').innerHTML = `
+    <thead>
+      <tr>
+        <th>${t('cmp.th.metric')}</th>
+        <th>${t('cmp.th.before')}</th>
+        <th>${t('cmp.th.after')}</th>
+        <th>${t('cmp.th.delta')}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((row) => {
+        const aText = missing(before) ? `<span class="dim">${t('cmp.na')}</span>` : escapeHtml(String(row.fmt(row.a, before)));
+        const bText = missing(after)  ? `<span class="dim">${t('cmp.na')}</span>` : escapeHtml(String(row.fmt(row.b, after)));
+        return `<tr>
+          <td class="metric">${escapeHtml(row.label)}</td>
+          <td class="num">${aText}</td>
+          <td class="num">${bText}</td>
+          <td class="num">${deltaCell(row, before, after)}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>`;
+}
+
+function deltaCell(row, before, after) {
+  if (before.events === 0 || after.events === 0) return dash;
+  if (row.better === 'none') return dash;
+  if (typeof row.a !== 'number' || typeof row.b !== 'number') return dash;
+
+  const difference = row.b - row.a;
+  if (difference === 0) return `<span class="dim">${dash}</span>`;
+
+  const improved = row.better === 'less' ? difference < 0 : difference > 0;
+  const size = row.unit === 'ms' ? ms(Math.abs(difference)) : Math.abs(difference);
+  return `<span class="${improved ? 'better' : 'worse'}">${difference < 0 ? '−' : '+'}${size}</span>`;
+}
+
 /* ---------------------- The event log ---------------------- */
 
-const EVENT_META = {
-  answer_selected:  ['اختيار إجابة', 'sel'],
-  saved_local:      ['حُفظ على الجهاز', 'loc'],
-  local_write_fail: ['فشل الحفظ المحلي', 'fail'],
-  sync_ok:          ['مزامنة ناجحة', 'ok'],
-  sync_fail:        ['مزامنة فاشلة', 'fail'],
-  server_recovered: ['عادت الخدمة', 'ok'],
-  reconciled:       ['تسوية مع الخادم', 'ok'],
-  browser_online:   ['عاد الاتصال', 'ok'],
-  browser_offline:  ['انقطع الاتصال', 'fail'],
-  exam_started:     ['بدء الاختبار', ''],
-  restored:         ['استعادة إجابات', 'loc'],
-  submitted:        ['تسليم', 'ok'],
+const EVENT_TONE = {
+  answer_selected: 'sel',
+  saved_local: 'loc',
+  local_write_fail: 'fail',
+  sync_ok: 'ok',
+  sync_fail: 'fail',
+  server_recovered: 'ok',
+  reconciled: 'ok',
+  browser_online: 'ok',
+  browser_offline: 'fail',
+  exam_started: '',
+  restored: 'loc',
+  submitted: 'ok',
+  db_down: 'fail',
+  db_up: 'ok',
+  failover: 'warn',
 };
 
 function details(event) {
   const p = event.payload || {};
   switch (event.type) {
-    case 'answer_selected':  return `سؤال ${p.question_id} · إصدار ${p.version}`;
-    case 'saved_local':      return `سؤال ${p.question_id} · ${ms(p.ms)} · الطابور ${p.pending}`;
-    case 'sync_ok':          return `${p.n} إجابة · ${ms(p.ms)} · متبقٍّ ${p.pending_after} · ${p.reason}`;
-    case 'sync_fail':        return `${p.n} إجابة · ${p.error} · الطابور ${p.pending}`;
-    case 'local_write_fail': return `سؤال ${p.question_id} · ${p.error}`;
-    case 'exam_started':     return `التخزين ${p.storage} · مستعادة ${p.restored_total}`;
-    case 'restored':         return `${p.n} إجابة`;
-    case 'reconciled':       return `${p.n} إجابة كانت على الخادم أصلاً`;
-    case 'submitted':        return `${p.correct} صحيحة من ${p.answered} مُجابة`;
+    case 'answer_selected':  return t('d.selected', { q: p.question_id, v: p.version });
+    case 'saved_local':      return t('d.local', { q: p.question_id, ms: ms(p.ms), p: p.pending });
+    case 'sync_ok':          return t('d.ok', { n: p.n, ms: ms(p.ms), p: p.pending_after, reason: p.reason });
+    case 'sync_fail':        return t('d.fail', { n: p.n, err: p.error, p: p.pending });
+    case 'local_write_fail': return t('d.writefail', { q: p.question_id, err: p.error });
+    case 'exam_started':     return t('d.started', { s: p.storage, n: p.restored_total });
+    case 'restored':         return t('d.restored', { n: p.n });
+    case 'reconciled':       return t('d.reconciled', { n: p.n });
+    case 'submitted':        return t('d.submitted', { c: p.correct, n: p.answered });
+    case 'db_down':          return t('d.dbdown', { err: p.error });
+    case 'db_up':            return t('d.dbup', { t: ms(p.ms) });
+    case 'failover':         return t('d.failover', { from: p.from, to: p.to });
     default:                 return '';
   }
 }
@@ -565,16 +874,20 @@ function renderLog(list) {
 
   $('log').innerHTML = `
     <thead>
-      <tr><th>الوقت</th><th>الحدث</th><th>التفاصيل</th><th>الملف</th></tr>
+      <tr>
+        <th>${t('log.th.time')}</th><th>${t('log.th.event')}</th>
+        <th>${t('log.th.details')}</th><th>${t('log.th.profile')}</th>
+      </tr>
     </thead>
     <tbody>
       ${rows.map((event) => {
-        const [label, tone] = EVENT_META[event.type] || [event.type, ''];
+        const key = `ev.${event.type}`;
+        const label = t(key) === key ? event.type : t(key);
         return `<tr>
           <td class="num">${clockTime(event.t)}</td>
-          <td><span class="tag ${tone}">${label}</span></td>
-          <td class="metric">${details(event)}</td>
-          <td>${event.profile === 'protected' ? 'حماية' : 'أساس'}</td>
+          <td><span class="tag ${EVENT_TONE[event.type] || ''}">${escapeHtml(label)}</span></td>
+          <td class="metric">${escapeHtml(details(event))}</td>
+          <td>${event.profile === 'protected' ? t('log.profile.p') : t('log.profile.b')}</td>
         </tr>`;
       }).join('')}
     </tbody>`;

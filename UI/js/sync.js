@@ -58,8 +58,20 @@ function markBackToLocal(batch) {
 
 /* ---------------------- Flushing ---------------------- */
 
-export async function flush({ reason = 'timer' } = {}) {
-  if (state.saving || state.submitted) return true;
+/* Only one flush may own the queue at a time, and a caller that finds one in
+   flight waits for it and then runs its own. The earlier guard returned true
+   in that case, which let submit proceed on another attempt's optimism: the
+   queued answers had not landed, and the exam was graded without them. */
+let inFlight = null;
+
+export async function flush(options = {}) {
+  while (inFlight) { try { await inFlight; } catch (_) { /* its own caller handled it */ } }
+  inFlight = flushOnce(options);
+  try { return await inFlight; } finally { inFlight = null; }
+}
+
+async function flushOnce({ reason = 'timer' } = {}) {
+  if (state.submitted) return true;
   if (!state.attemptId) return true;      // no session yet — nothing to send anywhere
 
   const pending = await pendingAnswers();

@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Recoverability — Results</title>
+
+<!-- Chart.js for the queue-depth chart. If the CDN is unreachable (a projector
+     with no internet), onerror flips a flag and a plain SVG chart is drawn
+     instead, so the demo never loses its most visual panel. -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+        onerror="window.__noChartJs = true"></script>
+
+<style>
+/* ---------------------------------------------------------------- tokens */
+:root {
+  --bg:        #eef2f7;
+  --surface:   #ffffff;
+  --surface-2: #f8fafc;
+  --border:    #dbe3ec;
+  --text:      #0f172a;
+  --muted:     #64748b;
+  --accent:    #0f766e;
+
+  --ok:    #15803d;  --ok-bg:   #dcfce7;  --ok-line:   #16a34a;
+  --warn:  #b45309;  --warn-bg: #fef3c7;  --warn-line: #d97706;
+  --err:   #b91c1c;  --err-bg:  #fee2e2;  --err-line:  #dc2626;
+
+  --grid:  #e2e8f0;
+  --band:  rgba(220, 38, 38, .13);
+  --series:#0f766e;
+  --series-fill: rgba(15, 118, 110, .14);
+
+  --radius: 16px;
+  --shadow: 0 1px 2px rgba(15,23,42,.05), 0 10px 30px rgba(15,23,42,.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #0b1120;
+    --surface:   #131c2e;
+    --surface-2: #18233a;
+    --border:    #26334b;
+    --text:      #e8eef7;
+    --muted:     #94a3b8;
+    --accent:    #2dd4bf;
+
+    --ok:    #4ade80;  --ok-bg:   #14321f;
+    --warn:  #fbbf24;  --warn-bg: #3a2c0c;
+    --err:   #f87171;  --err-bg:  #3b1414;
+
+    --grid:  #26334b;
+    --band:  rgba(248, 113, 113, .16);
+    --series:#2dd4bf;
+    --series-fill: rgba(45, 212, 191, .16);
+
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:        #0b1120;
+  --surface:   #131c2e;
+  --surface-2: #18233a;
+  --border:    #26334b;
+  --text:      #e8eef7;
+  --muted:     #94a3b8;
+  --accent:    #2dd4bf;
+
+  --ok:    #4ade80;  --ok-bg:   #14321f;
+  --warn:  #fbbf24;  --warn-bg: #3a2c0c;
+  --err:   #f87171;  --err-bg:  #3b1414;
+
+  --grid:  #26334b;
+  --band:  rgba(248, 113, 113, .16);
+  --series:#2dd4bf;
+  --series-fill: rgba(45, 212, 191, .16);
+
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+}
+
+/* ---------------------------------------------------------------- base */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 17px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1680px; margin: 0 auto; padding: 0 32px 64px; }
+
+/* Measured values line up column-wise. */
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- header */
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 26px 0 20px;
+}
+
+h1 { font-size: 26px; margin: 0; font-weight: 700; letter-spacing: -.2px; }
+header .spacer { flex: 1; }
+
+.btn {
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 11px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] .btn.on,
+:root:not([data-theme="light"]) .btn.on { color: #06231f; }
+.btn.danger.on { background: var(--err); border-color: var(--err); color: #fff; }
+.btn.small { font-size: 14px; padding: 8px 14px; }
+.btn[disabled] { opacity: .55; cursor: default; }
+.btn[disabled]:hover { border-color: var(--border); }
+
+.group { display: flex; gap: 10px; }
+
+/* ---------------------------------------------------------------- A: status bar */
+.statusbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 26px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 24px;
+  margin-bottom: 22px;
+}
+.st { display: flex; align-items: baseline; gap: 9px; font-size: 17px; white-space: nowrap; }
+.st .lbl { color: var(--muted); font-size: 15px; }
+.st .val { font-weight: 700; }
+.st .dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--muted); flex: none; align-self: center;
+}
+.st.ok   .dot { background: var(--ok); }
+.st.warn .dot { background: var(--warn); }
+.st.bad  .dot { background: var(--err); }
+.st.ok   .val { color: var(--ok); }
+.st.warn .val { color: var(--warn); }
+.st.bad  .val { color: var(--err); }
+
+.reload-note {
+  width: 100%;
+  font-size: 15px;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-radius: 10px;
+  padding: 9px 14px;
+}
+.hidden { display: none !important; }
+
+/* ---------------------------------------------------------------- B: metric cards */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+  margin-bottom: 22px;
+}
+@media (max-width: 1000px) { .cards { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 6px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 26px 28px 24px;
+  text-align: center;
+}
+.card .k { font-size: 19px; color: var(--muted); font-weight: 600; }
+.card .v {
+  font-size: clamp(46px, 6.4vw, 92px);
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 10px 0 6px;
+  letter-spacing: -1.5px;
+}
+.card .v .of { font-size: .42em; font-weight: 600; color: var(--muted); letter-spacing: 0; }
+.card .s { font-size: 16px; color: var(--muted); }
+
+.card.good { border-top-color: var(--ok); }
+.card.good .v { color: var(--ok); }
+.card.mid  { border-top-color: var(--warn); }
+.card.mid  .v { color: var(--warn); }
+.card.bad  { border-top-color: var(--err); }
+.card.bad  .v { color: var(--err); }
+
+/* ---------------------------------------------------------------- panels */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px 26px 26px;
+  margin-bottom: 22px;
+}
+.panel h2 { font-size: 20px; margin: 0 0 4px; font-weight: 700; }
+.panel .hint { font-size: 15px; color: var(--muted); margin: 0 0 18px; }
+
+.split { display: grid; grid-template-columns: 1.5fr 1.05fr 1fr; gap: 22px; }
+@media (max-width: 1500px) { .split { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 1000px) { .split { grid-template-columns: 1fr; } }
+.split > .panel { margin-bottom: 0; }
+
+/* The failover announcement. It stays on screen once a transition has been
+   recorded: it is the single most important thing that happened, and it must
+   not scroll away while the presenter is still talking about it. */
+.banner {
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 600;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+.banner.bad { background: var(--err-bg); color: var(--err); }
+
+/* What the node buttons just did, or why they could not. */
+.note {
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-top: 14px;
+  font-size: 15px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.note.bad { background: var(--err-bg); color: var(--err); }
+
+.node-row .name { font-weight: 700; font-size: 17px; }
+.node-row .addr { color: var(--muted); font-weight: 400; font-size: 14px; }
+.node-row .serving {
+  display: inline-block; margin-inline-start: 8px;
+  padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 700;
+  background: var(--ok-bg); color: var(--ok);
+}
+td.act { text-align: end; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- C: chart */
+.chart-box { position: relative; height: 320px; }
+.chart-box svg { width: 100%; height: 100%; }
+.chart-empty {
+  display: grid; place-items: center; height: 100%;
+  color: var(--muted); font-size: 16px;
+}
+.legend {
+  display: flex; gap: 22px; flex-wrap: wrap;
+  font-size: 15px; color: var(--muted); margin-top: 12px;
+}
+.legend i { display: inline-block; width: 22px; height: 10px; border-radius: 3px; margin-inline-end: 8px; vertical-align: middle; }
+.legend .sw-line { background: var(--series); }
+.legend .sw-band { background: var(--band); border: 1px solid var(--err); }
+
+/* ---------------------------------------------------------------- tables */
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 14px 12px; border-bottom: 1px solid var(--border); text-align: start; }
+th { font-size: 15px; color: var(--muted); font-weight: 600; }
+tbody tr:last-child td { border-bottom: 0; }
+td.metric { font-weight: 600; font-size: 17px; }
+td.v, th.v { text-align: center; font-size: 20px; font-weight: 700; }
+td.d { text-align: center; font-size: 19px; font-weight: 700; }
+.better { color: var(--ok); }
+.worse  { color: var(--err); }
+.dim    { color: var(--muted); font-weight: 400; font-size: 16px; }
+
+.ha td.v { text-align: end; }
+.ha .tag {
+  display: inline-block; padding: 4px 14px; border-radius: 999px;
+  font-size: 17px; font-weight: 700;
+}
+.tag.ok   { background: var(--ok-bg);   color: var(--ok); }
+.tag.warn { background: var(--warn-bg); color: var(--warn); }
+.tag.bad  { background: var(--err-bg);  color: var(--err); }
+
+/* Fallback SVG chart */
+.fb-grid  { stroke: var(--grid); stroke-width: 1; }
+.fb-axis  { fill: var(--muted); font-size: 12px; }
+.fb-line  { fill: none; stroke: var(--series); stroke-width: 3; stroke-linejoin: round; }
+.fb-area  { fill: var(--series-fill); stroke: none; }
+.fb-band  { fill: var(--band); }
+</style>
+</head>
+
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Recoverability — Results</h1>
+
+    <div class="group">
+      <button class="btn" id="p-baseline">No protection</button>
+      <button class="btn" id="p-protected">Full protection</button>
+    </div>
+
+    <button class="btn danger" id="btn-offline">Simulate network outage</button>
+
+    <span class="spacer"></span>
+
+    <a class="btn small" href="/" target="_blank" rel="noopener">Open the exam ↗</a>
+    <button class="btn small" id="btn-theme" title="Switch between the light and dark theme">Theme</button>
+  </header>
+
+  <!-- ================= A: status bar ================= -->
+  <section class="statusbar">
+    <span class="st" id="s-server"><span class="dot"></span><span class="lbl">Server</span><span class="val num">…</span></span>
+    <span class="st" id="s-db"><span class="dot"></span><span class="lbl">Database</span><span class="val num">…</span></span>
+    <span class="st" id="s-node"><span class="dot"></span><span class="lbl">Node</span><span class="val num">…</span></span>
+    <span class="st" id="s-sync"><span class="dot"></span><span class="lbl">Synchronous replication</span><span class="val num">…</span></span>
+    <span class="st" id="s-standbys"><span class="dot"></span><span class="lbl">Standbys</span><span class="val num">…</span></span>
+    <span class="st" id="s-queue"><span class="dot"></span><span class="lbl">Queued</span><span class="val num">…</span></span>
+    <span class="st" id="s-profile"><span class="dot"></span><span class="lbl">Mode</span><span class="val num">…</span></span>
+    <span class="reload-note hidden" id="reload-note">
+      The mode changed structurally — reload the exam tab for it to take effect.
+    </span>
+  </section>
+
+  <!-- ================= B: the three decisive numbers ================= -->
+  <section class="cards">
+    <div class="card" id="c-lost">
+      <div class="k">Answers lost</div>
+      <div class="v num">—</div>
+      <div class="s">The decisive measure</div>
+    </div>
+    <div class="card" id="c-rpo">
+      <div class="k">Measured recovery point (RPO)</div>
+      <div class="v num">—</div>
+      <div class="s">Target: under 30 seconds</div>
+    </div>
+    <div class="card" id="c-rto">
+      <div class="k">Longest recovery time</div>
+      <div class="v num">—</div>
+      <div class="s">Target: under 15 seconds</div>
+    </div>
+  </section>
+
+  <!-- ================= C: queue depth ================= -->
+  <section class="panel">
+    <h2>Local queue depth over time</h2>
+    <p class="hint">Answers saved locally that have not reached the server yet. The line rises during an outage and returns to zero once recovery completes.</p>
+    <div class="chart-box" id="chart-box">
+      <div class="chart-empty">No measurements yet — start the exam in the other tab.</div>
+    </div>
+    <div class="legend">
+      <span><i class="sw-line"></i>Answers waiting</span>
+      <span><i class="sw-band"></i>Outage window</span>
+    </div>
+  </section>
+
+  <div class="split">
+    <!-- ================= D: before / after ================= -->
+    <section class="panel">
+      <h2>Before and after</h2>
+      <p class="hint">Run the exam once in “No protection” and once in “Full protection” — the table fills itself and the results are kept.</p>
+      <div style="overflow-x:auto">
+        <table id="compare"></table>
+      </div>
+    </section>
+
+    <!-- ================= F: the cluster's nodes ================= -->
+    <section class="panel">
+      <h2>Cluster nodes</h2>
+      <p class="hint">Every node is asked on its own, so a stopped node reads as stopped rather than as missing. Pick a node and stop it to run the failover live.</p>
+      <div class="banner hidden" id="failover-banner"></div>
+      <table class="ha" id="nodes"></table>
+      <div class="note hidden" id="node-note"></div>
+    </section>
+
+    <!-- ================= E: database HA ================= -->
+    <section class="panel">
+      <h2>Database high availability</h2>
+      <p class="hint">The server-side half of recovery: synchronous replication to a standby.</p>
+      <table class="ha" id="ha"></table>
+    </section>
+  </div>
+
+</div>
+
+<script type="module">
+/* The presentation view of the recovery dashboard.
+ *
+ * It is deliberately read-only about the experiment: it never writes an event
+ * of its own, so opening it alongside the full dashboard cannot double-count
+ * anything. Its numbers come from the same three sources the full dashboard
+ * uses — the IndexedDB events store the exam page writes to (plus the live
+ * BroadcastChannel feed), GET /api/v1/health, and GET /api/v1/cluster.
+ *
+ * The three things it does write are the profile switch, the simulated
+ * disconnect — both through the same localStorage key and the same broadcast
+ * message the full dashboard uses, so the two pages stay interchangeable —
+ * and the node failure, which is a POST to the server and touches nothing
+ * local at all.
+ */
+
+import { API_BASE, CFG_KEY, DEFAULTS } from '/static/js/config.js';
+import { readEvents, onBusMessage, postBus } from '/static/js/metrics.js';
+
+const $ = (id) => document.getElementById(id);
+
+/* Targets the non-functional requirement is judged against. */
+const RPO_TARGET_MS = 30000;
+const RTO_TARGET_MS = 15000;
+
+const POLL_MS = 5000;
+const RUNS_KEY = 'exam_pres_runs';   // durable before/after snapshots
+const THEME_KEY = 'ui_theme';
+
+/* A stopped node must not be one stray click away, so the button arms first
+   and fires on the second click. It disarms itself again after this long. */
+const ARM_MS = 6000;
+
+/* While a node is down the cluster is one promotion away from settling, and
+   the five-second poll is too slow to watch it happen. */
+const FAST_POLL_MS = 1500;
+
+/* The two profiles, identical to the presets of the full dashboard. */
+const PROFILES = {
+  baseline:  { ...DEFAULTS, useAutosave: false, useOptimistic: false, storage: 'memory', saveDebounceMs: 0 },
+  protected: { ...DEFAULTS },
+};
+
+/* Values the exam tab applies without a reload; everything else is structural. */
+const LIVE_KEYS = [
+  'autosaveIntervalMs', 'saveDebounceMs', 'syncingDelayMs', 'requestTimeoutMs',
+  'retryBaseMs', 'retryMaxMs', 'maxRetries', 'healthProbeMs', 'batchMax',
+  'simulateOffline', 'failRate', 'extraLatencyMs',
+];
+const STRUCTURAL_KEYS = ['storage', 'useAutosave', 'useOptimistic'];
+
+let events = [];
+let cluster = null;
+let health;                  // undefined until the first poll answers
+let redrawTimer = null;
+let chart = null;
+
+/* Node control state. `armed` is the node whose button is waiting for its
+   confirming click, `busy` the one docker is currently working on, and
+   `killedAt` when the last node was stopped — the clock the promotion is
+   timed against. */
+let armed = null;            // { index, action }
+let armTimer = null;
+let busy = null;             // { index, action }
+let nodeNote = null;         // { text, bad }
+let killedAt = null;         // { index, at }
+let fastPollUntil = 0;
+
+const dash = '—';
+
+/* ---------------------- Configuration ---------------------- */
+
+function storedConfig() {
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(CFG_KEY) || '{}') }; }
+  catch (_) { return { ...DEFAULTS }; }
+}
+
+function currentProfile() {
+  const c = storedConfig();
+  return (c.useAutosave && c.useOptimistic && c.storage !== 'memory') ? 'protected' : 'baseline';
+}
+
+function writeConfig(next) {
+  localStorage.setItem(CFG_KEY, JSON.stringify(next));
+  const live = {};
+  for (const key of LIVE_KEYS) live[key] = next[key];
+  postBus({ type: 'cfg:update', patch: live });
+}
+
+function applyProfile(name) {
+  const before = storedConfig();
+  /* A simulated disconnect is a demo state, not a profile setting: switching
+     profiles mid-outage must not silently reconnect the exam tab. */
+  const next = { ...PROFILES[name], simulateOffline: before.simulateOffline };
+  writeConfig(next);
+
+  const structural = STRUCTURAL_KEYS.some((key) => before[key] !== next[key]);
+  $('reload-note').classList.toggle('hidden', !structural);
+  redraw();
+}
+
+function setOffline(on) {
+  const next = { ...storedConfig(), simulateOffline: on };
+  writeConfig(next);
+  renderControls();
+}
+
+/* ---------------------- Boot ---------------------- */
+
+/* IndexedDB does not always fail cleanly: held open by another tab, or
+   blocked by the browser's storage policy, the open request can simply never
+   answer. Awaiting it before the first poll would leave the whole dashboard on
+   "…" with no server status at all — the one thing that does not depend on it. */
+function readEventsSafely() {
+  return Promise.race([
+    readEvents().catch(() => []),
+    new Promise((resolve) => setTimeout(() => resolve([]), 3000)),
+  ]);
+}
+
+async function boot() {
+  applyTheme(storedTheme());
+  wireActions();
+  redraw();                       // the shell, before anything has answered
+
+  /* Polling starts first and on its own: the server half of the picture must
+     come up even when the local half cannot. */
+  poll();
+  schedulePoll();
+
+  onBusMessage((message) => {
+    if (!message || message.type === 'cfg:update') return;   // config messages, not events
+    events.push(message);
+    scheduleRedraw();
+  });
+
+  events = await readEventsSafely();
+  redraw();
+}
+
+/* One self-rescheduling timer rather than a fixed interval, so the poll can
+   tighten to FAST_POLL_MS for the seconds a failover is actually running. */
+function schedulePoll() {
+  const delay = Date.now() < fastPollUntil ? FAST_POLL_MS : POLL_MS;
+  setTimeout(async () => { await poll(); schedulePoll(); }, delay);
+}
+
+function scheduleRedraw() {
+  clearTimeout(redrawTimer);
+  redrawTimer = setTimeout(redraw, 180);
+}
+
+function redraw() {
+  const grouped = groupByProfile(events);
+  const profile = currentProfile();
+  const live = summarize(grouped[profile] || []);
+
+  /* Every run with events is snapshotted, so the comparison survives a reload
+     and a cleared events store. */
+  for (const [name, list] of Object.entries(grouped)) {
+    if (name in PROFILES && list.length) saveRun(name, summarize(list));
+  }
+
+  renderControls();
+  renderStatus(live);
+  renderCards(live);
+  renderChart(seriesFrom(events), summarize(events).outages);
+  renderCompare(runFor('baseline', grouped), runFor('protected', grouped));
+  renderNodes();
+  renderHa();
+}
+
+/* ---------------------- Server polling ---------------------- */
+
+async function poll() {
+  await Promise.all([pollHealth(), pollCluster()]);
+  redraw();
+}
+
+async function pollHealth() {
+  try {
+    const res = await fetch(`${API_BASE}/health`);
+    health = await res.json();
+  } catch (_) {
+    health = null;
+  }
+}
+
+async function pollCluster() {
+  let body;
+  try {
+    const res = await fetch(`${API_BASE}/cluster`);
+    body = await res.json();
+  } catch (error) {
+    body = { reachable: false, error: String(error), replicas: [], failovers: [] };
+  }
+
+  /* An unreachable database keeps the last known picture on screen — blanking
+     it would erase exactly the evidence of what failed. But the node list is
+     taken from every answer, reachable or not: it is probed node by node and
+     stays true while the database as a whole is unusable, which is the only
+     moment it matters. */
+  if (body.reachable || cluster === null) cluster = body;
+  else cluster = { ...cluster, reachable: false, error: body.error, nodes: body.nodes || [], failovers: body.failovers || [] };
+}
+
+/* ---------------------- Analysis ----------------------
+   Identical to the full dashboard: the presentation view must never be able to
+   report a different number from the same events. */
+
+function groupByProfile(list) {
+  const groups = {};
+  for (const event of list) {
+    const key = event.profile || 'unknown';
+    (groups[key] || (groups[key] = [])).push(event);
+  }
+  return groups;
+}
+
+/* Queue depth: every event carries how many answers have not reached the
+   server yet. */
+function seriesFrom(list) {
+  const points = [];
+  for (const event of list) {
+    const p = event.payload || {};
+    let depth = null;
+    if (event.type === 'saved_local' && typeof p.pending === 'number') depth = p.pending;
+    else if (event.type === 'sync_ok' && typeof p.pending_after === 'number') depth = p.pending_after;
+    else if (event.type === 'sync_fail' && typeof p.pending === 'number') depth = p.pending;
+    if (depth !== null) points.push({ t: event.t, depth });
+  }
+  return points;
+}
+
+function summarize(list) {
+  const selected = list.filter((e) => e.type === 'answer_selected');
+  const ok       = list.filter((e) => e.type === 'sync_ok');
+  const fail     = list.filter((e) => e.type === 'sync_fail');
+  /* An answer may reach the server via sendBeacon as the tab closes, and the
+     merge on the next open discovers it — it counts as delivered, not lost. */
+  const delivered = list.filter((e) => e.type === 'sync_ok' || e.type === 'reconciled');
+
+  /* The last selection per question — that is what has to reach the server. */
+  const lastSelect = new Map();
+  for (const event of selected) lastSelect.set(event.payload.question_id, event.t);
+
+  const durable = [];
+  let lost = 0;
+  for (const [questionId, t0] of lastSelect) {
+    const hit = delivered.find((e) => e.t >= t0 && (e.payload.ids || []).includes(questionId));
+    if (!hit) { lost += 1; continue; }
+    if (hit.type === 'sync_ok') durable.push(hit.t - t0);
+  }
+
+  /* Outage windows: from the first failure to the first success after it. */
+  const outages = [];
+  let openedAt = null;
+  for (const event of list) {
+    if (event.type === 'sync_fail' && openedAt === null) openedAt = event.t;
+    else if (event.type === 'sync_ok' && openedAt !== null) {
+      outages.push({ from: openedAt, to: event.t });
+      openedAt = null;
+    }
+  }
+  if (openedAt !== null) outages.push({ from: openedAt, to: null });
+
+  const closed = outages.filter((o) => o.to !== null);
+  const depths = seriesFrom(list).map((p) => p.depth);
+
+  return {
+    events: list.length,
+    answers: lastSelect.size,
+    lost,
+    rpo: durable.length ? Math.max(...durable) : null,
+    recovery: closed.length ? Math.max(...closed.map((o) => o.to - o.from)) : null,
+    ok: ok.length,
+    fail: fail.length,
+    nowDepth: depths.length ? depths[depths.length - 1] : 0,
+    outages,
+  };
+}
+
+/* ---------------------- Run snapshots ---------------------- */
+
+function readRuns() {
+  try { return JSON.parse(localStorage.getItem(RUNS_KEY) || '{}'); }
+  catch (_) { return {}; }
+}
+
+function saveRun(profile, s) {
+  const runs = readRuns();
+  runs[profile] = {
+    at: Date.now(),
+    events: s.events, answers: s.answers, lost: s.lost,
+    rpo: s.rpo, recovery: s.recovery, ok: s.ok, fail: s.fail,
+  };
+  try { localStorage.setItem(RUNS_KEY, JSON.stringify(runs)); } catch (_) { /* quota */ }
+}
+
+/* The live events win whenever that profile has any; otherwise the stored
+   snapshot of the earlier run fills the column. */
+function runFor(profile, grouped) {
+  const list = grouped[profile] || [];
+  if (list.length) return summarize(list);
+  return readRuns()[profile] || { events: 0 };
+}
+
+/* ---------------------- Formatting ---------------------- */
+
+function seconds(value) {
+  if (value === null || value === undefined) return dash;
+  return `${(value / 1000).toFixed(1)} s`;
+}
+
+function bytes(value) {
+  if (value === null || value === undefined) return dash;
+  if (value === 0) return '0';
+  if (value < 1024) return `${Math.round(value)} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"]/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+}
+
+/* Green when the target is met, amber while it is within half again of the
+   target, red beyond it. */
+function tone(value, target) {
+  if (value === null || value === undefined) return '';
+  if (value < target) return 'good';
+  if (value < target * 1.5) return 'mid';
+  return 'bad';
+}
+
+/* ---------------------- Controls ---------------------- */
+
+function renderControls() {
+  const profile = currentProfile();
+  $('p-baseline').classList.toggle('on', profile === 'baseline');
+  $('p-protected').classList.toggle('on', profile === 'protected');
+
+  const offline = Boolean(storedConfig().simulateOffline);
+  const button = $('btn-offline');
+  button.classList.toggle('on', offline);
+  button.textContent = offline ? 'Reconnect' : 'Simulate network outage';
+}
+
+/* ---------------------- A: status bar ---------------------- */
+
+function setStatus(id, state, value) {
+  const box = $(id);
+  box.className = `st ${state}`;
+  box.querySelector('.val').textContent = value;
+}
+
+function renderStatus(live) {
+  if (health === undefined)        setStatus('s-server', '', '…');
+  else if (health === null)        setStatus('s-server', 'bad', 'down');
+  else if (health.status === 'ok') setStatus('s-server', 'ok', 'up');
+  else                             setStatus('s-server', 'warn', 'degraded');
+
+  const dbUp = health && health.database === 'up' && (cluster === null || cluster.reachable);
+  setStatus('s-db', health === undefined ? '' : (dbUp ? 'ok' : 'bad'),
+            health === undefined ? '…' : (dbUp ? 'up' : 'down'));
+
+  const role = cluster && cluster.role;
+  const nodes = (cluster && cluster.nodes) || [];
+  const servingIndex = nodes.findIndex((node) => node.serving);
+  const roleText = role === 'primary' ? 'primary' : (role === 'standby' ? 'standby' : dash);
+  const down = nodes.filter((node) => !node.reachable).length;
+
+  setStatus('s-node', role === 'primary' && !down ? 'ok' : (role ? 'warn' : 'bad'),
+            servingIndex === -1 ? roleText : `${nodeLabel(servingIndex)} · ${roleText}`);
+
+  const sync = (cluster && cluster.sync_mode) || null;
+  setStatus('s-sync', sync === 'sync' ? 'ok' : (sync === 'async' ? 'warn' : (sync ? 'bad' : '')),
+            sync === 'sync' ? 'on' : (sync === 'async' ? 'async only' : (sync ? 'off' : dash)));
+
+  const streaming = ((cluster && cluster.replicas) || []).filter((r) => r.state === 'streaming').length;
+  setStatus('s-standbys', cluster === null ? '' : (streaming > 0 ? 'ok' : 'bad'),
+            cluster === null ? dash : String(streaming));
+
+  setStatus('s-queue', live.nowDepth === 0 ? 'ok' : 'warn', String(live.nowDepth));
+
+  const profile = currentProfile();
+  setStatus('s-profile', profile === 'protected' ? 'ok' : 'warn',
+            profile === 'protected' ? 'Full protection' : 'No protection');
+}
+
+/* ---------------------- B: metric cards ---------------------- */
+
+function card(id, valueHtml, state) {
+  const box = $(id);
+  box.className = `card ${state || ''}`;
+  box.querySelector('.v').innerHTML = valueHtml;
+}
+
+function renderCards(s) {
+  const lostState = s.events === 0 ? '' : (s.lost === 0 ? 'good' : 'bad');
+  card('c-lost',
+       `${s.lost || 0}<span class="of"> of ${s.answers || 0}</span>`,
+       lostState);
+
+  card('c-rpo', escapeHtml(seconds(s.rpo)), tone(s.rpo, RPO_TARGET_MS));
+  card('c-rto', escapeHtml(seconds(s.recovery)), tone(s.recovery, RTO_TARGET_MS));
+}
+
+/* ---------------------- C: queue depth chart ---------------------- */
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function renderChart(points, outages) {
+  const box = $('chart-box');
+
+  if (points.length === 0) {
+    if (chart) { chart.destroy(); chart = null; }
+    box.innerHTML = '<div class="chart-empty">No measurements yet — start the exam in the other tab.</div>';
+    return;
+  }
+
+  const t0 = points[0].t;
+  const t1 = Math.max(points[points.length - 1].t, t0 + 1000, Date.now());
+  const elapsed = (time) => (time - t0) / 1000;
+
+  /* The step holds until the next event, and the series is carried to the
+     right edge so "still queued" reads as a plateau, not as an end. */
+  const data = points.map((p) => ({ x: elapsed(p.t), y: p.depth }));
+  data.push({ x: elapsed(t1), y: points[points.length - 1].depth });
+
+  const bands = outages.map((o) => ({ from: elapsed(o.from), to: elapsed(o.to === null ? t1 : o.to) }));
+
+  if (window.Chart && !window.__noChartJs) drawChartJs(box, data, bands);
+  else drawFallback(box, data, bands);
+}
+
+const bandPlugin = {
+  id: 'outageBands',
+  beforeDatasetsDraw(instance, _args, options) {
+    const { ctx, chartArea: area, scales } = instance;
+    if (!area) return;
+    ctx.save();
+    ctx.fillStyle = options.color;
+    for (const band of options.bands || []) {
+      const from = scales.x.getPixelForValue(band.from);
+      const to = scales.x.getPixelForValue(band.to);
+      ctx.fillRect(from, area.top, Math.max(2, to - from), area.bottom - area.top);
+    }
+    ctx.restore();
+  },
+};
+
+function drawChartJs(box, data, bands) {
+  const colors = {
+    series: cssVar('--series'),
+    fill: cssVar('--series-fill'),
+    grid: cssVar('--grid'),
+    muted: cssVar('--muted'),
+    band: cssVar('--band'),
+  };
+
+  if (!chart) {
+    box.innerHTML = '<canvas></canvas>';
+    chart = new Chart(box.querySelector('canvas'), {
+      type: 'line',
+      data: { datasets: [{ data, stepped: true, fill: true, pointRadius: 0, borderWidth: 3 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        parsing: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: { type: 'linear', title: { display: true, text: 'Time since the first measurement (s)' },
+               ticks: { maxTicksLimit: 8, callback: (v) => Math.round(v) } },
+          y: { beginAtZero: true, title: { display: true, text: 'Answers waiting' },
+               ticks: { precision: 0 } },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { title: (items) => `${Math.round(items[0].parsed.x)} s`,
+                                  label: (item) => `waiting: ${item.parsed.y}` } },
+          outageBands: { bands, color: colors.band },
+        },
+      },
+      plugins: [bandPlugin],
+    });
+  } else {
+    chart.data.datasets[0].data = data;
+    chart.options.plugins.outageBands.bands = bands;
+  }
+
+  const dataset = chart.data.datasets[0];
+  dataset.borderColor = colors.series;
+  dataset.backgroundColor = colors.fill;
+  chart.options.plugins.outageBands.color = colors.band;
+  for (const axis of ['x', 'y']) {
+    chart.options.scales[axis].grid = { color: colors.grid };
+    chart.options.scales[axis].ticks.color = colors.muted;
+    chart.options.scales[axis].title.color = colors.muted;
+  }
+  chart.update('none');
+}
+
+/* Drawn when Chart.js could not be fetched — the same step line and outage
+   bands, without the tooltip. */
+function drawFallback(box, data, bands) {
+  const W = 1000, H = 320;
+  const PAD = { top: 16, right: 20, bottom: 34, left: 46 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+
+  const xMax = Math.max(1, data[data.length - 1].x);
+  const yTop = Math.max(1, ...data.map((p) => p.y));
+  const step = Math.max(1, Math.ceil(yTop / 4));
+  const yMax = step * Math.ceil(yTop / step);
+
+  const x = (v) => PAD.left + (v / xMax) * plotW;
+  const y = (v) => PAD.top + plotH - (v / yMax) * plotH;
+
+  let line = `M ${x(data[0].x).toFixed(1)} ${y(data[0].y).toFixed(1)}`;
+  for (let i = 1; i < data.length; i += 1) {
+    line += ` H ${x(data[i].x).toFixed(1)} V ${y(data[i].y).toFixed(1)}`;
+  }
+  const area = `${line} V ${(PAD.top + plotH).toFixed(1)} H ${x(data[0].x).toFixed(1)} Z`;
+
+  const grid = [];
+  for (let v = 0; v <= yMax; v += step) {
+    grid.push(`<line class="fb-grid" x1="${PAD.left}" y1="${y(v).toFixed(1)}" x2="${PAD.left + plotW}" y2="${y(v).toFixed(1)}"></line>`
+      + `<text class="fb-axis" x="${PAD.left - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${v}</text>`);
+  }
+
+  const ticks = [];
+  for (let i = 0; i <= 5; i += 1) {
+    const v = (xMax * i) / 5;
+    ticks.push(`<text class="fb-axis" x="${x(v).toFixed(1)}" y="${H - 12}" text-anchor="middle">${Math.round(v)}</text>`);
+  }
+
+  const rects = bands.map((band) => {
+    const from = x(band.from);
+    const width = Math.max(2, x(band.to) - from);
+    return `<rect class="fb-band" x="${from.toFixed(1)}" y="${PAD.top}" width="${width.toFixed(1)}" height="${plotH}"></rect>`;
+  }).join('');
+
+  chart = null;
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+      aria-label="Local queue depth over time">
+    ${rects}${grid.join('')}
+    <path class="fb-area" d="${area}"></path>
+    <path class="fb-line" d="${line}"></path>
+    ${ticks.join('')}
+  </svg>`;
+}
+
+/* ---------------------- D: before / after ---------------------- */
+
+function percentDelta(before, after) {
+  if (typeof before !== 'number' || typeof after !== 'number' || before === 0) return dash;
+  const change = Math.round(((after - before) / before) * 100);
+  if (change === 0) return `<span class="dim">${dash}</span>`;
+  return `<span class="${change < 0 ? 'better' : 'worse'}">${change < 0 ? '−' : '+'}${Math.abs(change)}%</span>`;
+}
+
+function countDelta(before, after) {
+  if (typeof before !== 'number' || typeof after !== 'number') return dash;
+  const change = after - before;
+  if (change === 0) return `<span class="dim">${dash}</span>`;
+  return `<span class="${change < 0 ? 'better' : 'worse'}">${change < 0 ? '−' : '+'}${Math.abs(change)}</span>`;
+}
+
+function renderCompare(before, after) {
+  const missing = (s) => !s || !s.events;
+  const na = `<span class="dim">not run</span>`;
+
+  const rows = [
+    { label: 'Answers lost',
+      fmt: (s) => `${s.lost} of ${s.answers}`,
+      delta: () => countDelta(before.lost, after.lost) },
+    { label: 'Recovery point (RPO)',
+      fmt: (s) => seconds(s.rpo),
+      delta: () => percentDelta(before.rpo, after.rpo) },
+    { label: 'Longest recovery time',
+      fmt: (s) => seconds(s.recovery),
+      delta: () => percentDelta(before.recovery, after.recovery) },
+    { label: 'Requests succeeded / failed',
+      fmt: (s) => `${s.ok} / ${s.fail}`,
+      delta: () => `<span class="dim">${dash}</span>` },
+  ];
+
+  $('compare').innerHTML = `
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th class="v">Before — no protection</th>
+        <th class="v">After — full protection</th>
+        <th class="v">Difference</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((row) => `
+        <tr>
+          <td class="metric">${escapeHtml(row.label)}</td>
+          <td class="v num">${missing(before) ? na : escapeHtml(row.fmt(before))}</td>
+          <td class="v num">${missing(after) ? na : escapeHtml(row.fmt(after))}</td>
+          <td class="d num">${missing(before) || missing(after) ? dash : row.delta()}</td>
+        </tr>`).join('')}
+    </tbody>`;
+}
+
+/* ---------------------- F: the cluster's nodes ----------------------
+   The question a failover demonstration is about is not "is the database up"
+   but "which node is up" — a stopped primary and a promoted standby both read
+   as "up" from one connection. Every configured node is probed separately by
+   the server, and this is where that shows.
+
+   It is also where the demonstration is driven from: each node the server
+   reports as controllable carries a button that stops it (or starts it again),
+   so the presenter chooses which node dies instead of running a script. The
+   button only asks the server to stop that node — nothing here promotes
+   anything. repmgrd on the surviving node notices the primary is gone and
+   promotes itself, and that promotion arrives back through the ordinary poll
+   as a changed role and a new WAL timeline. */
+
+/* Nodes are numbered by their position in the configured list, which is the
+   order the driver tries them in: the first is node 1. */
+function nodeLabel(index) {
+  return `Node ${index + 1}`;
+}
+
+function renderNodes() {
+  const nodes = (cluster && cluster.nodes) || [];
+  const table = $('nodes');
+
+  if (!nodes.length) {
+    table.innerHTML = `<tbody><tr><td class="metric dim">Only one node is configured — there is nothing to fail over to.</td></tr></tbody>`;
+    renderFailoverBanner();
+    renderNodeNote();
+    return;
+  }
+
+  table.innerHTML = `
+    <tbody>
+      ${nodes.map((node, index) => {
+        const role = node.role === 'primary' ? 'primary'
+                   : node.role === 'standby' ? 'standby' : dash;
+        const tone = !node.reachable ? 'bad' : (node.role === 'primary' ? 'ok' : 'warn');
+        const value = node.reachable ? role : 'down';
+        return `<tr class="node-row">
+          <td class="metric">
+            <span class="name">${escapeHtml(nodeLabel(index))}</span>
+            ${node.serving ? '<span class="serving">serving now</span>' : ''}
+            <div class="addr">${escapeHtml(`${node.host}:${node.port}`)}</div>
+          </td>
+          <td class="v"><span class="tag ${tone}">${escapeHtml(value)}</span></td>
+          <td class="act">${nodeButton(node, index)}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>`;
+
+  renderFailoverBanner();
+  renderNodeNote();
+}
+
+/* The button for one node, in one of four states: absent (the server does not
+   let this node be controlled), working, armed, or ready. */
+function nodeButton(node, index) {
+  if (!node.controllable) return '';
+
+  const action = node.reachable ? 'fail' : 'restore';
+
+  if (busy && busy.index === index) {
+    return `<button class="btn small" disabled>${busy.action === 'fail' ? 'stopping…' : 'starting…'}</button>`;
+  }
+  if (armed && armed.index === index && armed.action === action) {
+    return `<button class="btn small danger on" data-node="${index}" data-action="${action}">`
+      + `${action === 'fail' ? `Confirm — stop ${escapeHtml(nodeLabel(index))}` : `Confirm — start ${escapeHtml(nodeLabel(index))}`}</button>`;
+  }
+  return `<button class="btn small${action === 'fail' ? ' danger' : ''}" data-node="${index}" data-action="${action}">`
+    + `${action === 'fail' ? 'Fail this node' : 'Restore'}</button>`;
+}
+
+function renderNodeNote() {
+  const box = $('node-note');
+  box.className = `note${nodeNote ? '' : ' hidden'}${nodeNote && nodeNote.bad ? ' bad' : ''}`;
+  box.textContent = nodeNote ? nodeNote.text : '';
+}
+
+function setNote(text, bad = false) {
+  nodeNote = { text, bad };
+  renderNodeNote();
+}
+
+/* First click arms, second click fires. A node is one click from being
+   stopped only for the few seconds ARM_MS allows. */
+function onNodeClick(index, action) {
+  if (armed && armed.index === index && armed.action === action) {
+    disarm();
+    runNodeAction(index, action);
+    return;
+  }
+  armed = { index, action };
+  clearTimeout(armTimer);
+  /* Disarming takes the "click again" note with it: arming is the only thing
+     that could have written the note still on screen. */
+  armTimer = setTimeout(() => { armed = null; nodeNote = null; renderNodes(); }, ARM_MS);
+  setNote(action === 'fail'
+    ? `Click again to stop ${nodeLabel(index)}. The application keeps running; the cluster has to promote the other node.`
+    : `Click again to start ${nodeLabel(index)} again. It rejoins as a standby of the current primary.`);
+  renderNodes();
+}
+
+function disarm() {
+  clearTimeout(armTimer);
+  armed = null;
+}
+
+async function runNodeAction(index, action) {
+  busy = { index, action };
+  renderNodes();
+
+  try {
+    const res = await fetch(`${API_BASE}/cluster/nodes/${index}/${action}`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+
+    if (!res.ok) throw new Error(body.detail || `the server answered ${res.status}`);
+    if (!body.ok) throw new Error(body.detail || 'the command was refused');
+
+    if (action === 'fail') {
+      killedAt = { index, at: Date.now() };
+      setNote(`${nodeLabel(index)} stopped. Watch this panel: repmgrd on the surviving node should promote it within about 10–15 seconds.`);
+    } else {
+      killedAt = null;
+      setNote(`${nodeLabel(index)} started again — it rejoins the cluster as a standby.`);
+    }
+    /* The interesting seconds start now, so poll faster through them. */
+    fastPollUntil = Date.now() + 60000;
+  } catch (error) {
+    setNote(`${nodeLabel(index)}: ${error.message}`, true);
+  } finally {
+    busy = null;
+  }
+
+  poll();
+}
+
+/* Turns an address the server reported into the node number the table shows,
+   so the banner and the table name the same thing. */
+function nodeNameFor(address) {
+  const nodes = (cluster && cluster.nodes) || [];
+  const index = nodes.findIndex((node) => `${node.host}:${node.port}` === address);
+  return index === -1 ? (address || dash) : nodeLabel(index);
+}
+
+function renderFailoverBanner() {
+  const banner = $('failover-banner');
+  const transitions = ((cluster && cluster.failovers) || [])
+    .filter((event) => event.kind !== 'first_seen');
+
+  if (!transitions.length) {
+    banner.className = 'banner hidden';
+    banner.textContent = '';
+    return;
+  }
+
+  const last = transitions[transitions.length - 1];
+  const at = new Date(last.at);
+  const kind = last.kind === 'promotion' ? 'Promotion' : 'Switch';
+
+  /* When this transition followed a node stopped from this page, the gap
+     between the two is the database tier's own recovery time — the number the
+     whole demonstration exists to produce. */
+  let took = '';
+  if (killedAt && at.getTime() > killedAt.at) {
+    took = ` Took ${((at.getTime() - killedAt.at) / 1000).toFixed(1)} s from stopping ${nodeLabel(killedAt.index)}.`;
+  }
+
+  banner.className = 'banner';
+  banner.textContent =
+    `${kind} at ${at.toLocaleTimeString('en-GB', { hour12: false })} — service moved from `
+    + `${nodeNameFor(last.from_node)} to ${nodeNameFor(last.to_node)}.${took}`;
+}
+
+/* ---------------------- E: database HA ---------------------- */
+
+function renderHa() {
+  const replicas = (cluster && cluster.replicas) || [];
+  const streaming = replicas.filter((r) => r.state === 'streaming');
+  const lags = replicas.map((r) => r.flush_lag_bytes).filter((v) => typeof v === 'number');
+  const worstLag = lags.length ? Math.max(...lags) : null;
+  const sync = (cluster && cluster.sync_mode) || null;
+  const wal = (cluster && cluster.wal_level) || null;
+
+  const syncLabel = { sync: 'synchronous', async: 'asynchronous', none: 'none' }[sync] || dash;
+  const syncTone  = sync === 'sync' ? 'ok' : (sync === 'async' ? 'warn' : (sync ? 'bad' : ''));
+  const walTone   = (wal === 'replica' || wal === 'logical') ? 'ok' : (wal ? 'bad' : '');
+
+  const rows = [
+    { label: 'Replication mode',   value: syncLabel,          tone: syncTone },
+    { label: 'WAL level',          value: wal || dash,        tone: walTone },
+    { label: 'Streaming standbys', value: cluster === null ? dash : String(streaming.length),
+      tone: cluster === null ? '' : (streaming.length > 0 ? 'ok' : 'bad') },
+    { label: 'Replication lag',    value: bytes(worstLag),
+      tone: worstLag === 0 ? 'ok' : (worstLag === null ? '' : 'warn') },
+  ];
+
+  $('ha').innerHTML = `
+    <tbody>
+      ${rows.map((row) => `
+        <tr>
+          <td class="metric">${escapeHtml(row.label)}</td>
+          <td class="v"><span class="tag ${row.tone}">${escapeHtml(row.value)}</span></td>
+        </tr>`).join('')}
+    </tbody>`;
+}
+
+/* ---------------------- Theme ---------------------- */
+
+function storedTheme() {
+  try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (_) { return 'auto'; }
+}
+
+function applyTheme(theme) {
+  if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+  try { localStorage.setItem(THEME_KEY, theme); } catch (_) { /* ignore */ }
+
+  /* Chart.js caches the colours it was given, so it is rebuilt on a change. */
+  if (chart) { chart.destroy(); chart = null; }
+  scheduleRedraw();
+}
+
+/* ---------------------- Wiring ---------------------- */
+
+function wireActions() {
+  $('p-baseline').addEventListener('click', () => applyProfile('baseline'));
+  $('p-protected').addEventListener('click', () => applyProfile('protected'));
+  $('btn-offline').addEventListener('click', () => setOffline(!storedConfig().simulateOffline));
+
+  /* Delegated: the node rows are rewritten on every poll. */
+  $('nodes').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-node]');
+    if (!button) return;
+    onNodeClick(Number(button.dataset.node), button.dataset.action);
+  });
+
+  $('btn-theme').addEventListener('click', () => {
+    const order = ['auto', 'light', 'dark'];
+    applyTheme(order[(order.indexOf(storedTheme()) + 1) % order.length]);
+  });
+
+  window.matchMedia('(prefers-color-scheme: dark)')
+    .addEventListener('change', () => { if (storedTheme() === 'auto') applyTheme('auto'); });
+
+  /* The full dashboard writes the same key; keep the two views in step. */
+  window.addEventListener('storage', (event) => {
+    if (event.key === CFG_KEY) redraw();
+  });
+}
+
+boot();
+</script>
+</body>
+</html>

@@ -14,69 +14,90 @@
 <div class="dash">
 
   <header class="dash-top">
-    <h1>لوحة قياس آليات التعافي</h1>
-    <span class="pill" id="pill-server">الخادم…</span>
-    <span class="pill" id="pill-profile">الملف…</span>
+    <h1 data-i18n="page.title">لوحة قياس آليات التعافي</h1>
+    <!-- No data-i18n on the pills: their text is live state, re-rendered by
+         dashboard.js on every poll and on every language switch. -->
+    <span class="pill" id="pill-server">…</span>
+    <span class="pill" id="pill-db">…</span>
+    <span class="pill" id="pill-profile">…</span>
     <span class="spacer"></span>
-    <a class="btn btn-ghost" href="/" target="_blank" rel="noopener">فتح الاختبار في تبويب ↗</a>
+    <button class="btn btn-ghost btn-lang" id="btn-lang" data-i18n="head.lang" data-i18n-title="head.langTitle">English</button>
+    <a class="btn btn-ghost" href="/" target="_blank" rel="noopener" data-i18n="head.openExam">فتح الاختبار في تبويب ↗</a>
   </header>
 
-  <!-- ============ Controls row: precedes everything it affects ============ -->
+  <!-- ============ Controls: only the values that change system behaviour ============ -->
   <section class="panel">
-    <h2>القيم القابلة للضبط</h2>
-    <p class="hint">
-      «تطبيق» يكتب الإعدادات في <code>localStorage</code>، ويبثّ القيم القابلة للتغيير الحيّ إلى تبويب
-      الاختبار فوراً. القيم البنيوية (محرّك التخزين ومفتاحا A/B) تحتاج إعادة تحميل تبويب الاختبار.
-    </p>
+    <h2 data-i18n="ctl.h">القيم المؤثّرة</h2>
+    <p class="hint" data-i18n="ctl.hint"></p>
 
     <div class="presets">
-      <button class="btn btn-ghost" id="preset-baseline">خط الأساس — الآليات مطفأة</button>
-      <button class="btn btn-ghost" id="preset-protected">الحماية الكاملة</button>
-      <button class="btn btn-ghost" id="preset-fast">دورة سريعة (5 ثوانٍ)</button>
+      <button class="btn btn-ghost" id="preset-baseline" data-i18n="preset.baseline"></button>
+      <button class="btn btn-ghost" id="preset-protected" data-i18n="preset.protected"></button>
+      <button class="btn btn-ghost" id="preset-fast" data-i18n="preset.fast"></button>
     </div>
 
     <div class="knobs" id="knobs"></div>
 
+    <details class="advanced" id="advanced">
+      <summary data-i18n="ctl.advanced">قيم متقدّمة</summary>
+      <div class="knobs" id="knobs-advanced"></div>
+    </details>
+
     <div class="actions">
-      <button class="btn" id="btn-apply">تطبيق</button>
-      <button class="btn btn-ghost" id="btn-reset">استعادة الافتراضيات</button>
-      <span class="reload-note hidden" id="reload-note">قيمة بنيوية تغيّرت — أعد تحميل تبويب الاختبار.</span>
+      <button class="btn" id="btn-apply" data-i18n="btn.apply">تطبيق</button>
+      <button class="btn btn-ghost" id="btn-reset" data-i18n="btn.reset">استعادة الافتراضيات</button>
+      <span class="reload-note hidden" id="reload-note" data-i18n="note.reload"></span>
       <span class="spacer"></span>
-      <button class="btn btn-ghost" id="btn-export">تصدير الأحداث JSON</button>
-      <button class="btn btn-ghost" id="btn-clear">مسح سجلّ الأحداث</button>
+      <button class="btn btn-ghost" id="btn-export" data-i18n="btn.export"></button>
+      <button class="btn btn-ghost" id="btn-clear" data-i18n="btn.clear"></button>
     </div>
   </section>
 
-  <!-- ============ Metric tiles ============ -->
+  <!-- ============ Client-side metric tiles ============ -->
   <section class="tiles" id="tiles"></section>
+
+  <!-- ============ Database cluster: replication, WAL, failover ============ -->
+  <section class="panel">
+    <h2 data-i18n="cl.h">قاعدة البيانات</h2>
+    <p class="hint" data-i18n="cl.hint"></p>
+
+    <div class="banner hidden" id="cluster-banner"></div>
+    <div class="tiles compact" id="cluster-tiles"></div>
+
+    <h3 data-i18n="cl.replicas.h">العقد الاحتياطية</h3>
+    <div class="table-wrap">
+      <table class="data" id="replicas"></table>
+    </div>
+
+    <h3 data-i18n="cl.fo.h">تحويلات مسجّلة</h3>
+    <p class="hint" data-i18n="cl.fo.hint"></p>
+    <div class="table-wrap">
+      <table class="data" id="failovers"></table>
+    </div>
+  </section>
 
   <!-- ============ Chart ============ -->
   <section class="panel">
-    <h2>عمق الطابور عبر الزمن</h2>
-    <p class="hint">
-      عدد الإجابات المحفوظة على الجهاز ولم تصل الخادم بعد. النطاق الأحمر هو فترة تعذّر فيها الوصول
-      إلى الخادم — عودة المنحنى إلى الصفر بعدها هي التعافي التلقائي.
-    </p>
+    <h2 data-i18n="ch.h">عمق الطابور عبر الزمن</h2>
+    <p class="hint" data-i18n="ch.hint"></p>
     <div class="chart-wrap" id="chart-wrap">
-      <div class="chart-empty" id="chart-empty">لا توجد أحداث بعد. افتح الاختبار وأجب عن سؤال.</div>
+      <div class="chart-empty" data-i18n="ch.empty"></div>
     </div>
   </section>
 
-  <!-- ============ Comparison ============ -->
+  <!-- ============ Before / after ============ -->
   <section class="panel">
-    <h2>خط الأساس مقابل الحماية الكاملة</h2>
-    <p class="hint">
-      كل عمود يُحسب من أحداث الجولات التي جرت بذلك الملف التجريبي. شغّل جولة بكل إعداد ليمتلئ العمودان.
-    </p>
+    <h2 data-i18n="cmp.h">قبل وبعد</h2>
+    <p class="hint" data-i18n="cmp.hint"></p>
     <div class="table-wrap">
       <table class="data" id="compare"></table>
     </div>
   </section>
 
-  <!-- ============ Event log: the tabular version of the chart ============ -->
+  <!-- ============ Event log ============ -->
   <section class="panel">
-    <h2>سجلّ الأحداث</h2>
-    <p class="hint">النسخة الجدولية لكل ما يعرضه المخطّط أعلاه — وهي الدليل الخام الذي يُرفق بالتقرير.</p>
+    <h2 data-i18n="log.h">سجلّ الأحداث</h2>
+    <p class="hint" data-i18n="log.hint"></p>
     <div class="table-wrap log-wrap">
       <table class="data" id="log"></table>
     </div>

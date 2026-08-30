@@ -158,7 +158,7 @@ table.data {
 }
 table.data th, table.data td {
   padding: 9px 12px;
-  text-align: right;
+  text-align: start;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -187,3 +187,47 @@ table.data .worse  { color: var(--err); font-weight: 600; }
 .tag.fail { background: #fee2e2; color: var(--err); }
 .tag.loc  { background: #e0f2fe; color: #075985; }
 .tag.sel  { background: var(--primary-soft); color: var(--primary-dark); }
+
+/* ---------- Language toggle ---------- */
+.btn-lang { padding: 7px 14px; font-size: 13px; min-width: 82px; }
+
+/* ---------- Advanced values disclosure ---------- */
+.advanced { margin-top: 16px; }
+.advanced > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+  padding: 6px 0;
+  user-select: none;
+}
+.advanced > summary:hover { color: var(--text); }
+.advanced[open] > summary { margin-bottom: 12px; }
+
+/* ---------- Cluster panel ---------- */
+.panel h3 {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 24px 0 8px;
+}
+.panel h3 + .hint { margin-bottom: 12px; }
+
+/* A denser tile row: the cluster reports six facts that are read together. */
+.tiles.compact { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 0; }
+.tiles.compact .tile { padding: 13px 15px; }
+.tiles.compact .tile .v { font-size: 21px; }
+
+.banner {
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  border: 1px solid transparent;
+}
+.banner.bad  { background: #fee2e2; color: var(--err);  border-color: #fecaca; }
+.banner.warn { background: #fef3c7; color: var(--warn); border-color: #fde68a; }
+
+.tag.warn { background: #fef3c7; color: var(--warn); }
+.dim { color: var(--muted); opacity: .75; font-size: 12px; }
+.mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; }
+table.data td.empty { color: var(--muted); text-align: center; padding: 18px 12px; }

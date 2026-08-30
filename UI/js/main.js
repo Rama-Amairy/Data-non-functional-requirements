@@ -252,17 +252,29 @@ async function submitExam({ auto = false } = {}) {
   button.disabled = true;
   button.textContent = 'جاري التسليم...';
 
-  /* Do not submit before confirming the latest answers have landed. */
-  const flushed = await flush({ reason: 'submit' });
-  if (!flushed
-      && !confirm('تعذّر حفظ بعض الإجابات. المتابعة قد تُفقدها — هل تريد التسليم؟')) {
-    button.disabled = false;
-    button.textContent = 'تسليم الاختبار';
-    return;
-  }
-
+  /* Everything below runs inside the try, and the button is restored in the
+     finally. The flush and the confirm used to sit outside it: any rejection
+     there — an aborted IndexedDB transaction, a store that failed to open —
+     escaped as an unhandled rejection and left the button disabled on
+     "جاري التسليم..." for good, with no way back except a reload. */
   try {
-    const result = await api(`${API_BASE}/attempts/${state.attemptId}/submit`, { method: 'POST' });
+    /* Do not submit before confirming the latest answers have landed. */
+    const flushed = await flush({ reason: 'submit' });
+
+    /* Time is up on an automatic submission: there is nobody to answer a
+       dialog, and stopping would lose more than submitting does. */
+    if (!flushed && !auto
+        && !confirm('تعذّر حفظ بعض الإجابات. المتابعة قد تُفقدها — هل تريد التسليم؟')) {
+      return;
+    }
+
+    /* chaos: the simulated disconnect has to cut this path too, otherwise the
+       demo lets a submission through in the middle of an outage. */
+    const result = await api(`${API_BASE}/attempts/${state.attemptId}/submit`, {
+      method: 'POST',
+      chaos: true,
+    });
+
     state.submitted = true;
     stopTimer();
     stopAutoSave();
@@ -275,6 +287,9 @@ async function submitExam({ auto = false } = {}) {
     showResult(result);
   } catch (error) {
     toast(`تعذّر التسليم: ${error.message}`);
+  } finally {
+    /* Restored unconditionally: after a successful submission the result
+       screen is showing and this button is out of sight anyway. */
     button.disabled = false;
     button.textContent = 'تسليم الاختبار';
   }
