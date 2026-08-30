@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>لوحة قياس آليات التعافي</title>
+
+<link rel="stylesheet" href="/static/css/tokens.css" />
+<link rel="stylesheet" href="/static/css/base.css" />
+<link rel="stylesheet" href="/static/css/dashboard.css" />
+</head>
+<body>
+
+<div class="dash">
+
+  <header class="dash-top">
+    <h1>لوحة قياس آليات التعافي</h1>
+    <span class="pill" id="pill-server">الخادم…</span>
+    <span class="pill" id="pill-profile">الملف…</span>
+    <span class="spacer"></span>
+    <a class="btn btn-ghost" href="/" target="_blank" rel="noopener">فتح الاختبار في تبويب ↗</a>
+  </header>
+
+  <!-- ============ صفّ الضبط: يسبق كل ما يخصّه ============ -->
+  <section class="panel">
+    <h2>القيم القابلة للضبط</h2>
+    <p class="hint">
+      «تطبيق» يكتب الإعدادات في <code>localStorage</code>، ويبثّ القيم القابلة للتغيير الحيّ إلى تبويب
+      الاختبار فوراً. القيم البنيوية (محرّك التخزين ومفتاحا A/B) تحتاج إعادة تحميل تبويب الاختبار.
+    </p>
+
+    <div class="presets">
+      <button class="btn btn-ghost" id="preset-baseline">خط الأساس — الآليات مطفأة</button>
+      <button class="btn btn-ghost" id="preset-protected">الحماية الكاملة</button>
+      <button class="btn btn-ghost" id="preset-fast">دورة سريعة (5 ثوانٍ)</button>
+    </div>
+
+    <div class="knobs" id="knobs"></div>
+
+    <div class="actions">
+      <button class="btn" id="btn-apply">تطبيق</button>
+      <button class="btn btn-ghost" id="btn-reset">استعادة الافتراضيات</button>
+      <span class="reload-note hidden" id="reload-note">قيمة بنيوية تغيّرت — أعد تحميل تبويب الاختبار.</span>
+      <span class="spacer"></span>
+      <button class="btn btn-ghost" id="btn-export">تصدير الأحداث JSON</button>
+      <button class="btn btn-ghost" id="btn-clear">مسح سجلّ الأحداث</button>
+    </div>
+  </section>
+
+  <!-- ============ بطاقات المقاييس ============ -->
+  <section class="tiles" id="tiles"></section>
+
+  <!-- ============ المخطّط ============ -->
+  <section class="panel">
+    <h2>عمق الطابور عبر الزمن</h2>
+    <p class="hint">
+      عدد الإجابات المحفوظة على الجهاز ولم تصل الخادم بعد. النطاق الأحمر هو فترة تعذّر فيها الوصول
+      إلى الخادم — عودة المنحنى إلى الصفر بعدها هي التعافي التلقائي.
+    </p>
+    <div class="chart-wrap" id="chart-wrap">
+      <div class="chart-empty" id="chart-empty">لا توجد أحداث بعد. افتح الاختبار وأجب عن سؤال.</div>
+    </div>
+  </section>
+
+  <!-- ============ المقارنة ============ -->
+  <section class="panel">
+    <h2>خط الأساس مقابل الحماية الكاملة</h2>
+    <p class="hint">
+      كل عمود يُحسب من أحداث الجولات التي جرت بذلك الملف التجريبي. شغّل جولة بكل إعداد ليمتلئ العمودان.
+    </p>
+    <div class="table-wrap">
+      <table class="data" id="compare"></table>
+    </div>
+  </section>
+
+  <!-- ============ سجلّ الأحداث: النسخة الجدولية للمخطّط ============ -->
+  <section class="panel">
+    <h2>سجلّ الأحداث</h2>
+    <p class="hint">النسخة الجدولية لكل ما يعرضه المخطّط أعلاه — وهي الدليل الخام الذي يُرفق بالتقرير.</p>
+    <div class="table-wrap log-wrap">
+      <table class="data" id="log"></table>
+    </div>
+  </section>
+
+</div>
+
+<script type="module" src="/static/js/dashboard.js"></script>
+</body>
+</html>

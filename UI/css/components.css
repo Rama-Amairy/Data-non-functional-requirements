@@ -1,0 +1,156 @@
+/* المكوّنات: المؤقّت، مؤشّر الحفظ، شبكة الأسئلة، الخيارات، حلقة النتيجة، التوست. */
+
+/* ---------- المؤقّت ---------- */
+.timer {
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 700;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  padding: 6px 16px;
+  border-radius: 999px;
+  letter-spacing: .5px;
+}
+.timer.warn { background: #fef3c7; color: var(--warn); }
+.timer.danger { background: #fee2e2; color: var(--err); }
+
+/* ---------- مؤشّر حالة الحفظ ----------
+   خمس حالات + حالة ابتدائية. اللون الأحمر محجوز لحالة واحدة فقط:
+   تعذّر الحفظ على جهاز الطالب، وهي الوحيدة التي تعني فقداناً محتملاً. */
+.save-status {
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: background .15s ease, color .15s ease;
+}
+.save-status.local   { background: #f1f5f9; color: var(--text); }
+.save-status.saving  { background: #eff6ff; color: var(--accent); }
+.save-status.saved   { background: #dcfce7; color: var(--ok); }
+.save-status.offline { background: #fef3c7; color: var(--warn); }
+.save-status.error   { background: #fee2e2; color: var(--err); }
+
+/* ---------- شبكة الأسئلة ---------- */
+.nav-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.nav-btn {
+  position: relative;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  color: var(--muted);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+}
+.nav-btn:hover { border-color: var(--primary); }
+.nav-btn.answered { background: var(--primary-soft); color: var(--primary-dark); border-color: #99f6e4; }
+.nav-btn.current { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+/* نقطة صغيرة تعني: محفوظة على الجهاز ولم تصل الخادم بعد */
+.nav-btn.pending::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  inset-inline-end: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.nav-btn.sending::after { background: var(--accent); }
+
+.legend { margin-top: 16px; font-size: 12.5px; color: var(--muted); display: grid; gap: 6px; }
+.legend span { display: flex; align-items: center; gap: 8px; }
+.dot { width: 12px; height: 12px; border-radius: 4px; border: 1px solid var(--border); display: inline-block; }
+.dot.answered { background: var(--primary-soft); border-color: #99f6e4; }
+.dot.empty { background: #f8fafc; }
+.dot.pending { background: var(--warn); border-color: var(--warn); border-radius: 50%; width: 10px; height: 10px; }
+
+.progress-line { margin-top: 18px; font-size: 13px; color: var(--muted); }
+.bar { height: 6px; background: #eef2f7; border-radius: 999px; overflow: hidden; margin-top: 8px; }
+.bar > i { display: block; height: 100%; background: var(--primary); width: 0; transition: width .25s ease; }
+
+/* ---------- السؤال والخيارات ---------- */
+.q-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.q-counter { font-size: 13px; color: var(--muted); }
+.q-text { font-size: 19px; font-weight: 600; margin: 0 0 22px; }
+
+.options { display: grid; gap: 10px; }
+.option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 13px 16px;
+  background: #fcfdfe;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.option:hover { border-color: var(--primary); background: #f8fffe; }
+.option input { accent-color: var(--primary); width: 17px; height: 17px; cursor: pointer; }
+.option .key {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  background: #eef2f7;
+  color: var(--muted);
+  display: grid; place-items: center;
+  font-size: 13px; font-weight: 700;
+}
+.option.selected { border-color: var(--primary); background: #f0fdfa; }
+.option.selected .key { background: var(--primary); color: #fff; }
+
+.q-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.q-actions .spacer { flex: 1; }
+
+/* ---------- النتيجة ---------- */
+.score-ring {
+  width: 150px; height: 150px;
+  margin: 8px auto 18px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: conic-gradient(var(--primary) var(--pct, 0%), #eef2f7 0);
+}
+.score-ring > div {
+  width: 118px; height: 118px;
+  background: var(--surface);
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 30px; font-weight: 700;
+  color: var(--primary-dark);
+}
+.result-lines { color: var(--muted); font-size: 14.5px; display: grid; gap: 4px; margin-bottom: 24px; }
+.result-lines b { color: var(--text); }
+
+/* ---------- التوست ---------- */
+.toast {
+  position: fixed;
+  bottom: 22px;
+  inset-inline-start: 22px;
+  background: #0f172a;
+  color: #fff;
+  padding: 11px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity .2s ease, transform .2s ease;
+  pointer-events: none;
+  z-index: 50;
+}
+.toast.show { opacity: .95; transform: translateY(0); }

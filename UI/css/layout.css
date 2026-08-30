@@ -1,0 +1,75 @@
+/* هيكل الشاشات الثلاث: الدخول، الاختبار، النتيجة. */
+
+/* ---------- شاشة الدخول ---------- */
+.login-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 40px 36px;
+  width: 100%;
+  max-width: 440px;
+  text-align: center;
+}
+.login-card h1 { font-size: 22px; margin: 0 0 6px; }
+.login-card p.sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+.badge-course {
+  display: inline-block;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 12px;
+  margin-bottom: 18px;
+}
+
+/* ---------- شريط الرأس ---------- */
+header.topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.topbar .title { font-weight: 700; font-size: 16px; }
+.topbar .who { color: var(--muted); font-size: 13px; }
+.topbar .spacer { flex: 1; }
+
+/* ---------- شاشة الاختبار ---------- */
+.layout {
+  max-width: 1080px;
+  margin: 24px auto;
+  padding: 0 24px 48px;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+.sidebar h3 { margin: 0 0 14px; font-size: 14px; color: var(--muted); font-weight: 600; }
+
+/* ---------- شاشة النتيجة ---------- */
+.result-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.result-card { max-width: 460px; width: 100%; text-align: center; }
+
+@media (max-width: 820px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { order: 2; }
+}

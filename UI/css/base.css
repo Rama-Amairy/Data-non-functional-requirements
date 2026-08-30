@@ -1,0 +1,47 @@
+/* الأساسيات: الصفحة، الأزرار، الحقول. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "Noto Sans Arabic", Tahoma, sans-serif;
+  line-height: 1.7;
+}
+
+button { font-family: inherit; cursor: pointer; }
+.hidden { display: none !important; }
+
+label.field { display: block; text-align: right; font-size: 14px; margin-bottom: 8px; color: var(--muted); }
+
+input[type="text"] {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 15px;
+  font-family: inherit;
+  background: #fbfdff;
+  color: var(--text);
+}
+input[type="text"]:focus { outline: 2px solid var(--primary); outline-offset: 1px; border-color: transparent; }
+
+.btn {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 11px 20px;
+  font-size: 15px;
+  background: var(--primary);
+  color: #fff;
+  transition: background .15s ease, opacity .15s ease;
+}
+.btn:hover { background: var(--primary-dark); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn-block { width: 100%; margin-top: 20px; }
+.btn-ghost { background: var(--surface); color: var(--text); border-color: var(--border); }
+.btn-ghost:hover { background: #f1f5f9; }
+.btn-danger { background: #be123c; }
+.btn-danger:hover { background: #9f1239; }
+
+.form-error { color: var(--err); font-size: 13px; margin-top: 14px; min-height: 18px; }
