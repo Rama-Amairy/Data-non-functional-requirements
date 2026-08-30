@@ -1,4 +1,4 @@
-/* متغيّرات التصميم — المصدر الوحيد لكل لون وقياس في الواجهة. */
+/* Design tokens — the single source for every colour and measurement in the UI. */
 
 :root {
   --bg: #f4f6f9;

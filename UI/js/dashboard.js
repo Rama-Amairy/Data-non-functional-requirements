@@ -1,15 +1,15 @@
-/* لوحة قياس آليات التعافي.
+/* The recovery-mechanism measurement dashboard.
  *
- * تعمل على /static/dashboard.html بنفس أصل التطبيق، فتقرأ /api/v1 مباشرة.
- * مصدر أرقامها هو مخزن events في IndexedDB نفسه الذي تكتب فيه صفحة الاختبار،
- * إضافة إلى بثّ حيّ عبر BroadcastChannel يجعل اللوحة تتحرّك بينما تُجرى التجربة
- * في التبويب المجاور.
+ * It runs at /static/dashboard.html on the application's own origin, so it can
+ * read /api/v1 directly. Its numbers come from the same IndexedDB events store
+ * the exam page writes to, plus a live BroadcastChannel feed that keeps the
+ * dashboard moving while the experiment runs in the neighbouring tab.
  */
 
 import { API_BASE, CFG, CFG_KEY, DEFAULTS } from './config.js';
 import { readEvents, clearEvents, onBusMessage, postBus } from './metrics.js';
 
-/* ---------------------- وصف المقابض ---------------------- */
+/* ---------------------- Knob definitions ---------------------- */
 
 const KNOBS = [
   { key: 'autosaveIntervalMs', label: 'دورة الحفظ التلقائي (م.ث)', type: 'number', min: 500,  step: 500,  live: true,  note: 'RPO ≈ الدورة + زمن الطلب' },
@@ -41,7 +41,7 @@ const $ = (id) => document.getElementById(id);
 let events = [];
 let redrawTimer = null;
 
-/* ---------------------- الإقلاع ---------------------- */
+/* ---------------------- Boot ---------------------- */
 
 async function boot() {
   renderKnobs();
@@ -51,7 +51,7 @@ async function boot() {
   redraw();
 
   onBusMessage((message) => {
-    if (!message || message.type === 'cfg:update') return;   // رسائل إعداد لا أحداث
+    if (!message || message.type === 'cfg:update') return;   // config messages, not events
     events.push(message);
     scheduleRedraw();
   });
@@ -78,7 +78,7 @@ function redraw() {
   $('pill-profile').className = `pill ${current === 'protected' ? 'up' : 'warn'}`;
 }
 
-/* ---------------------- الإعدادات ---------------------- */
+/* ---------------------- Configuration ---------------------- */
 
 function storedConfig() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(CFG_KEY) || '{}') }; }
@@ -171,7 +171,7 @@ function applyConfig({ silent = false } = {}) {
 
   localStorage.setItem(CFG_KEY, JSON.stringify(patch));
 
-  /* بثّ القيم القابلة للتغيير الحيّ إلى تبويب الاختبار. */
+  /* Broadcast the live-changeable values to the exam tab. */
   const live = {};
   for (const knob of KNOBS) if (knob.live) live[knob.key] = patch[knob.key];
   postBus({ type: 'cfg:update', patch: live });
@@ -236,7 +236,7 @@ async function pollHealth() {
   }
 }
 
-/* ---------------------- التحليل ---------------------- */
+/* ---------------------- Analysis ---------------------- */
 
 function groupByProfile(list) {
   const groups = {};
@@ -247,7 +247,8 @@ function groupByProfile(list) {
   return groups;
 }
 
-/* عمق الطابور: كل حدث يحمل عدد الإجابات التي لم تصل الخادم بعد. */
+/* Queue depth: every event carries how many answers have not reached the
+   server yet. */
 function seriesFrom(list) {
   const points = [];
   for (const event of list) {
@@ -273,11 +274,11 @@ function summarize(list) {
   const local    = list.filter((e) => e.type === 'saved_local');
   const ok       = list.filter((e) => e.type === 'sync_ok');
   const fail     = list.filter((e) => e.type === 'sync_fail');
-  /* إجابة قد تصل الخادم عبر sendBeacon عند إغلاق التبويب، فيكتشفها الدمج
-     عند الفتح التالي — تُحتسب واصلة، لا مفقودة. */
+  /* An answer may reach the server via sendBeacon as the tab closes, and the
+     merge on the next open discovers it — it counts as delivered, not lost. */
   const delivered = list.filter((e) => e.type === 'sync_ok' || e.type === 'reconciled');
 
-  /* آخر اختيار لكل سؤال — هو ما يجب أن يصل الخادم. */
+  /* The last selection per question — that is what has to reach the server. */
   const lastSelect = new Map();
   for (const event of selected) lastSelect.set(event.payload.question_id, event.t);
 
@@ -286,14 +287,14 @@ function summarize(list) {
   for (const [questionId, t] of lastSelect) {
     const hit = delivered.find((e) => e.t >= t && (e.payload.ids || []).includes(questionId));
     if (!hit) { lost += 1; continue; }
-    if (hit.type === 'sync_ok') durable.push(hit.t - t);   // زمن المتانة من المسار العادي فقط
+    if (hit.type === 'sync_ok') durable.push(hit.t - t);   // durability time from the normal path only
   }
 
   const perceived = local
     .map((e) => e.payload.ms)
     .filter((value) => typeof value === 'number');
 
-  /* نوافذ الانقطاع: من أول فشل حتى أول نجاح بعده. */
+  /* Outage windows: from the first failure to the first success after it. */
   const outages = [];
   let openedAt = null;
   for (const event of list) {
@@ -330,7 +331,7 @@ function summarize(list) {
   };
 }
 
-/* ---------------------- التنسيق ---------------------- */
+/* ---------------------- Formatting ---------------------- */
 
 const dash = '—';
 
@@ -349,7 +350,7 @@ function clockTime(t) {
   return new Date(t).toLocaleTimeString('ar-SY', { hour12: false });
 }
 
-/* ---------------------- البطاقات ---------------------- */
+/* ---------------------- Metric tiles ---------------------- */
 
 function renderTiles(s, profile) {
   const tiles = [
@@ -376,7 +377,7 @@ function renderTiles(s, profile) {
   $('pill-profile').dataset.profile = profile;
 }
 
-/* ---------------------- جدول المقارنة ---------------------- */
+/* ---------------------- Comparison table ---------------------- */
 
 function renderCompare(base, prot) {
   const rows = [
@@ -407,9 +408,10 @@ function renderCompare(base, prot) {
     </tbody>`;
 }
 
-/* ---------------------- المخطّط ----------------------
-   سلسلة واحدة، فلا حاجة إلى مفتاح ألوان: العنوان يسمّيها. النطاقات الحمراء
-   تعني حالة (تعذّر الوصول)، لا هوية سلسلة أخرى. */
+/* ---------------------- The chart ----------------------
+   A single series, so no colour legend is needed: the heading names it. The red
+   bands mean a state (the server could not be reached), not the identity of
+   another series. */
 
 const W = 900, H = 260;
 const PAD = { top: 18, right: 58, bottom: 30, left: 44 };
@@ -433,7 +435,7 @@ function renderChart(points, outages) {
   const x = (t) => PAD.left + ((t - t0) / (t1 - t0)) * PLOT_W;
   const y = (d) => PAD.top + PLOT_H - (d / yMax) * PLOT_H;
 
-  /* مسار درجي: القيمة تبقى ثابتة حتى الحدث التالي. */
+  /* A step path: the value holds until the next event. */
   let line = `M ${x(points[0].t).toFixed(1)} ${y(points[0].depth).toFixed(1)}`;
   for (let i = 1; i < points.length; i += 1) {
     line += ` H ${x(points[i].t).toFixed(1)} V ${y(points[i].depth).toFixed(1)}`;
@@ -525,7 +527,7 @@ function wireHover(wrap, points, x, y, t0) {
   });
 }
 
-/* ---------------------- سجلّ الأحداث ---------------------- */
+/* ---------------------- The event log ---------------------- */
 
 const EVENT_META = {
   answer_selected:  ['اختيار إجابة', 'sel'],

@@ -1,14 +1,16 @@
-/* منطق المزامنة: الطابور، التراجع الأسّي، والنبض على /health.
+/* Sync logic: the queue, exponential backoff, and the /health probe.
  *
- * الطابور هو مخزن answers نفسه: كل سجلّ حالته sync !== 'synced' ينتظر الإرسال.
- * لا حاجة إلى مخزن outbox منفصل لأن الترتيب لا يهمّ — الخادم يحكّم بالإصدار
- * لكل سؤال على حدة، فآخر كتابة لسؤال هي الوحيدة التي تعني شيئاً.
+ * The queue is the answers store itself: every record whose sync !== 'synced'
+ * is waiting to be sent. No separate outbox store is needed because ordering
+ * does not matter — the server arbitrates by version per question, so the last
+ * write for a question is the only one that means anything.
  *
- * إعادة الإرسال آمنة تماماً لأن الخادم يقبل الإجابة فقط عندما
- * incoming.version >= existing.version، فدفعة مكرّرة أو متأخّرة لا تفسد شيئاً.
+ * Resending is entirely safe because the server accepts an answer only when
+ * incoming.version >= existing.version, so a duplicate or late batch spoils
+ * nothing.
  */
 
-import { API_BASE, ATTEMPT_ID, CFG } from './config.js';
+import { API_BASE, CFG } from './config.js';
 import { api, NetworkError } from './api.js';
 import { Store } from './store.js';
 import { setStatus } from './status.js';
@@ -23,7 +25,7 @@ let debounceTimer = null;
 let autosaveTimer = null;
 let probeTimer    = null;
 
-/* ---------------------- الطابور ---------------------- */
+/* ---------------------- The queue ---------------------- */
 
 export async function pendingAnswers() {
   const rows = await Store.all('answers');
@@ -54,14 +56,16 @@ function markBackToLocal(batch) {
   }
 }
 
-/* ---------------------- التصريف ---------------------- */
+/* ---------------------- Flushing ---------------------- */
 
 export async function flush({ reason = 'timer' } = {}) {
   if (state.saving || state.submitted) return true;
+  if (!state.attemptId) return true;      // no session yet — nothing to send anywhere
 
   const pending = await pendingAnswers();
   if (pending.length === 0) {
-    /* لا شيء لإرساله: أعد رسم آخر وقت مزامنة حقيقي، لا وقتاً جديداً يوحي بحفظ لم يحدث. */
+    /* Nothing to send: repaint the last real sync time, not a fresh one that
+       would suggest a save that never happened. */
     if (lastSyncAt) setStatus('synced', { at: lastSyncAt });
     return true;
   }
@@ -80,11 +84,11 @@ export async function flush({ reason = 'timer' } = {}) {
   const started = performance.now();
 
   try {
-    const response = await api(`${API_BASE}/attempts/${ATTEMPT_ID}/save`, {
+    const response = await api(`${API_BASE}/attempts/${state.attemptId}/save`, {
       method: 'POST',
       chaos: true,
       body: JSON.stringify({
-        attempt_id: ATTEMPT_ID,
+        attempt_id: state.attemptId,
         answers: batch.map((r) => ({
           question_id: r.question_id,
           selected_answer: r.value,
@@ -100,7 +104,8 @@ export async function flush({ reason = 'timer' } = {}) {
     attempts = 0;
     stopProbe();
 
-    /* الخادم رفض إصداراً أقدم: نسخته أحدث، فاسحب واندمج بدل الإصرار. */
+    /* The server rejected an older version: its copy is newer, so pull and
+       merge rather than insisting. */
     if (response.skipped_count > 0) await reconcile();
 
     state.saving = false;
@@ -146,7 +151,8 @@ export async function flush({ reason = 'timer' } = {}) {
 
     setStatus(disconnected ? 'offline' : 'error', {
       pending: pending.length,
-      retryIn: backoff,
+      /* Without autosave there is no retry, so do not promise one. */
+      retryIn: CFG.useAutosave ? backoff : null,
     });
 
     scheduleRetry();
@@ -163,18 +169,19 @@ export function scheduleFlush(delay = 0, reason = 'debounce') {
 }
 
 function scheduleRetry() {
-  if (!CFG.useAutosave) return;                       // خط الأساس: محاولة واحدة فقط
+  if (!CFG.useAutosave) return;                       // baseline: a single attempt only
   if (CFG.maxRetries > 0 && attempts >= CFG.maxRetries) return;
 
   clearTimeout(retryTimer);
-  const jitter = Math.random() * backoff * 0.3;       // يمنع تزامن كل المتصفّحات دفعةً
+  const jitter = Math.random() * backoff * 0.3;       // keeps every browser from retrying in lockstep
   retryTimer = setTimeout(() => flush({ reason: 'retry' }), backoff + jitter);
   backoff = Math.min(backoff * 2, CFG.retryMaxMs);
 }
 
-/* ---------------------- النبض على الخادم ----------------------
-   حدث offline لا يُطلق عندما تسقط قاعدة البيانات والشبكة سليمة، فهذه هي
-   الطريقة الوحيدة لاكتشاف عودة الخدمة في تلك الحالة. */
+/* ---------------------- Probing the server ----------------------
+   The offline event does not fire when the database goes down while the network
+   is healthy, so this is the only way to detect the service returning in that
+   case. */
 
 function startProbe() {
   if (probeTimer || !CFG.useAutosave) return;
@@ -188,7 +195,7 @@ function startProbe() {
         logEvent('server_recovered', {});
         flush({ reason: 'recovered' });
       }
-    } catch (_) { /* ما زالت الخدمة ساقطة */ }
+    } catch (_) { /* the service is still down */ }
   }, CFG.healthProbeMs);
 }
 
@@ -197,7 +204,7 @@ function stopProbe() {
   probeTimer = null;
 }
 
-/* ---------------------- الدورة الزمنية ---------------------- */
+/* ---------------------- The timed cycle ---------------------- */
 
 export function startAutoSave() {
   stopAutoSave();
@@ -213,10 +220,11 @@ export function stopAutoSave() {
   stopProbe();
 }
 
-/* محاولة أخيرة عند إغلاق التبويب — تقرأ من الذاكرة لأن sendBeacon متزامن. */
+/* A last attempt as the tab closes — reads from memory because sendBeacon is
+   synchronous. */
 export function flushOnExit() {
-  if (state.submitted) return;
-  if (CFG.simulateOffline) return;      // الانقطاع المحاكى يجب أن يقطع هذا المسار أيضاً
+  if (state.submitted || !state.attemptId) return;
+  if (CFG.simulateOffline) return;      // a simulated disconnect must cut this path too
 
   const payload = Object.values(state.answers)
     .filter((a) => a.value && a.sync !== 'synced')
@@ -226,18 +234,18 @@ export function flushOnExit() {
 
   try {
     navigator.sendBeacon(
-      `${API_BASE}/attempts/${ATTEMPT_ID}/save`,
-      new Blob([JSON.stringify({ attempt_id: ATTEMPT_ID, answers: payload })],
+      `${API_BASE}/attempts/${state.attemptId}/save`,
+      new Blob([JSON.stringify({ attempt_id: state.attemptId, answers: payload })],
                { type: 'application/json' }),
     );
-  } catch (_) { /* المتصفّح يغلق على أي حال */ }
+  } catch (_) { /* the browser is closing anyway */ }
 }
 
-/* ---------------------- الاستعادة والدمج ---------------------- */
+/* ---------------------- Restore and merge ---------------------- */
 
 export async function mergeServerAnswers(serverAnswers) {
   let restored = 0;
-  const reconciled = [];        // إجابات تبيّن أنها على الخادم أصلاً
+  const reconciled = [];        // answers that turned out to be on the server already
 
   for (const remote of serverAnswers) {
     if (!remote.selected_answer) continue;
@@ -257,12 +265,13 @@ export async function mergeServerAnswers(serverAnswers) {
       restored += 1;
     } else if (local.version === remote.version && local.value === remote.selected_answer) {
       if (local.sync !== 'synced') reconciled.push(local.question_id);
-      local.sync = 'synced';                  // متطابقة: لا داعي لإعادة الإرسال
+      local.sync = 'synced';                  // identical: no need to resend
       await Store.put('answers', local);
     }
   }
 
-  /* بلا هذا الحدث تبدو الإجابة التي وصلت عبر sendBeacon وكأنها مفقودة في اللوحة. */
+  /* Without this event an answer that arrived via sendBeacon would look lost
+     in the dashboard. */
   if (reconciled.length > 0) logEvent('reconciled', { ids: reconciled, n: reconciled.length });
 
   answersChanged();
@@ -270,7 +279,7 @@ export async function mergeServerAnswers(serverAnswers) {
 }
 
 export async function reconcile() {
-  const server = await api(`${API_BASE}/attempts/${ATTEMPT_ID}/answers`);
+  const server = await api(`${API_BASE}/attempts/${state.attemptId}/answers`);
   await mergeServerAnswers(server.answers);
   return server;
 }

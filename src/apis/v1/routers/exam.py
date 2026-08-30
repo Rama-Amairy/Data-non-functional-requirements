@@ -6,21 +6,28 @@ from sqlalchemy import select
 from src.apis.dependencies import DbSession
 from src.domain.models import Exam, Question
 from src.domain.schema import ExamOut, QuestionOut, SeedResponse
-from src.domain.services import ensure_demo_data
+from src.domain.services import count_questions, ensure_exam
 
 router = APIRouter(prefix="/exams", tags=["exams"])
 
 
 @router.post("/seed", response_model=SeedResponse)
 def seed_data(db: DbSession) -> SeedResponse:
-    """Seeds the demo data: a student + an exam + five questions + an open attempt.
+    """Makes sure the exam and its questions exist.
 
-    Idempotent: if the data already exists it returns the status
-    ``already_seeded`` without writing anything.
+    Idempotent: if the exam is already there it returns ``already_seeded``
+    without writing anything. Students and attempts are not created here — they
+    are created per person at login.
     """
-    result = ensure_demo_data(db)
+    existing = db.execute(select(Exam).order_by(Exam.id).limit(1)).scalar_one_or_none()
+    exam = ensure_exam(db)
     db.commit()
-    return SeedResponse(**result)
+
+    return SeedResponse(
+        status="already_seeded" if existing is not None else "seeded",
+        exam_id=exam.id,
+        questions_count=count_questions(db, exam.id),
+    )
 
 
 @router.get("/{exam_id}", response_model=ExamOut)

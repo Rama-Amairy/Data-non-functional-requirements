@@ -1,4 +1,4 @@
-/* مساعدات DOM صغيرة مشتركة. */
+/* Small shared DOM helpers. */
 
 export const $ = (id) => document.getElementById(id);
 

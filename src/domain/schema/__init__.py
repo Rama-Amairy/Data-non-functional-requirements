@@ -9,12 +9,15 @@ from src.domain.schema.attempt import (
     ScoreOut,
 )
 from src.domain.schema.exam import (
-    DemoLoginRequest,
-    DemoLoginResponse,
     ExamOut,
     HealthResponse,
     QuestionOut,
     SeedResponse,
+)
+from src.domain.schema.session import (
+    LoginRequest,
+    SessionOut,
+    StartAttemptRequest,
 )
 
 __all__ = [
@@ -24,10 +27,11 @@ __all__ = [
     "SaveResponse",
     "SavedAnswerOut",
     "ScoreOut",
-    "DemoLoginRequest",
-    "DemoLoginResponse",
     "ExamOut",
     "HealthResponse",
     "QuestionOut",
     "SeedResponse",
+    "LoginRequest",
+    "SessionOut",
+    "StartAttemptRequest",
 ]

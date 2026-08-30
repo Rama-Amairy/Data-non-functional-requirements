@@ -1,39 +1,41 @@
-/* الإعدادات — كل قيمة قابلة للضبط في المشروع تمرّ من هنا.
+/* Configuration — every tunable value in the project passes through here.
  *
- * لوحة المقارنة (dashboard.html) تكتب التجاوزات في localStorage تحت المفتاح
- * exam_cfg، وهذا الملف يدمجها فوق الافتراضيات عند تحميل الصفحة. هكذا تُجرى كل
- * تجارب المقارنة دون تعديل أي سطر كود.
+ * The comparison dashboard (dashboard.html) writes its overrides to
+ * localStorage under the key exam_cfg, and this file merges them over the
+ * defaults on page load. That is how every comparison run is carried out
+ * without editing a single line of code.
  */
 
-export const API_BASE   = '/api/v1';
-export const EXAM_ID    = 1;
-export const ATTEMPT_ID = 1;
+export const API_BASE = '/api/v1';
+
+/* The exam and attempt ids are not constants any more: every student gets their
+   own attempt, and the ids come back from POST /students/login. */
 
 export const CFG_KEY = 'exam_cfg';
 
 export const DEFAULTS = {
-  /* --- التوقيت --- */
-  autosaveIntervalMs: 30000,  // دورة الحفظ التلقائي
-  saveDebounceMs:      1500,  // حفظ فوري بعد آخر نقرة (0 = بلا تأجيل)
-  syncingDelayMs:       250,  // لا تُظهر "جاري المزامنة" قبل هذا التأخّر
-  requestTimeoutMs:    8000,  // مهلة الطلب قبل اعتباره فاشلاً
+  /* --- Timing --- */
+  autosaveIntervalMs: 30000,  // autosave cycle
+  saveDebounceMs:      1500,  // save shortly after the last click (0 = no delay)
+  syncingDelayMs:       250,  // do not show "syncing" before this delay
+  requestTimeoutMs:    8000,  // request timeout before it counts as failed
 
-  /* --- إعادة المحاولة --- */
-  retryBaseMs:         1000,  // أساس التراجع الأسّي
-  retryMaxMs:         30000,  // سقف الانتظار بين المحاولات
-  maxRetries:             0,  // 0 = بلا حد
-  healthProbeMs:       5000,  // نبض /health أثناء الانقطاع
-  batchMax:              50,  // أقصى عدد إجابات في الطلب الواحد
+  /* --- Retry --- */
+  retryBaseMs:         1000,  // base of the exponential backoff
+  retryMaxMs:         30000,  // ceiling on the wait between attempts
+  maxRetries:             0,  // 0 = unlimited
+  healthProbeMs:       5000,  // /health probe interval while disconnected
+  batchMax:              50,  // most answers allowed in one request
 
-  /* --- مفاتيح المقارنة A/B --- */
+  /* --- A/B comparison switches --- */
   storage:      'indexeddb',  // indexeddb | localstorage | memory
-  useAutosave:         true,  // إطفاؤه يلغي الدورة الزمنية وإعادة المحاولة
-  useOptimistic:       true,  // إطفاؤه يجعل المؤشر ينتظر ردّ الخادم
+  useAutosave:         true,  // off: no timed cycle and no retries
+  useOptimistic:       true,  // off: the indicator waits for the server reply
 
-  /* --- حقن الأعطال للتجربة --- */
-  simulateOffline:    false,  // قطع محاكى دون DevTools
-  failRate:               0,  // 0..1 نسبة فشل عشوائي
-  extraLatencyMs:         0,  // تأخير صناعي قبل كل طلب حفظ
+  /* --- Fault injection for the experiment --- */
+  simulateOffline:    false,  // simulated disconnect without DevTools
+  failRate:               0,  // 0..1 random failure rate
+  extraLatencyMs:         0,  // artificial delay before every save request
 };
 
 function readOverrides() {
@@ -43,7 +45,7 @@ function readOverrides() {
 
 export const CFG = { ...DEFAULTS, ...readOverrides() };
 
-/* اسم الملف التجريبي الذي تُنسب إليه الأحداث في اللوحة. */
+/* Name of the profile the dashboard attributes events to. */
 export function profileName() {
   return (CFG.useAutosave && CFG.useOptimistic && CFG.storage !== 'memory')
     ? 'protected'

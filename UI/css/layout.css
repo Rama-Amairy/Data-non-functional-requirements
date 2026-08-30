@@ -1,6 +1,6 @@
-/* هيكل الشاشات الثلاث: الدخول، الاختبار، النتيجة. */
+/* Layout of the three screens: login, exam, result. */
 
-/* ---------- شاشة الدخول ---------- */
+/* ---------- Login screen ---------- */
 .login-wrap {
   min-height: 100vh;
   display: grid;
@@ -29,7 +29,7 @@
   margin-bottom: 18px;
 }
 
-/* ---------- شريط الرأس ---------- */
+/* ---------- Header bar ---------- */
 header.topbar {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -46,7 +46,7 @@ header.topbar {
 .topbar .who { color: var(--muted); font-size: 13px; }
 .topbar .spacer { flex: 1; }
 
-/* ---------- شاشة الاختبار ---------- */
+/* ---------- Exam screen ---------- */
 .layout {
   max-width: 1080px;
   margin: 24px auto;
@@ -65,7 +65,7 @@ header.topbar {
 }
 .sidebar h3 { margin: 0 0 14px; font-size: 14px; color: var(--muted); font-weight: 600; }
 
-/* ---------- شاشة النتيجة ---------- */
+/* ---------- Result screen ---------- */
 .result-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .result-card { max-width: 460px; width: 100%; text-align: center; }
 

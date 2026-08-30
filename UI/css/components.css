@@ -1,6 +1,6 @@
-/* المكوّنات: المؤقّت، مؤشّر الحفظ، شبكة الأسئلة، الخيارات، حلقة النتيجة، التوست. */
+/* Components: timer, save indicator, question grid, options, score ring, toast. */
 
-/* ---------- المؤقّت ---------- */
+/* ---------- Timer ---------- */
 .timer {
   font-variant-numeric: tabular-nums;
   font-size: 18px;
@@ -14,9 +14,9 @@
 .timer.warn { background: #fef3c7; color: var(--warn); }
 .timer.danger { background: #fee2e2; color: var(--err); }
 
-/* ---------- مؤشّر حالة الحفظ ----------
-   خمس حالات + حالة ابتدائية. اللون الأحمر محجوز لحالة واحدة فقط:
-   تعذّر الحفظ على جهاز الطالب، وهي الوحيدة التي تعني فقداناً محتملاً. */
+/* ---------- Save-status indicator ----------
+   Five states plus an initial one. Red is reserved for a single state: the save
+   failed on the student's own device, the only one that means possible loss. */
 .save-status {
   font-size: 13px;
   padding: 6px 14px;
@@ -32,7 +32,7 @@
 .save-status.offline { background: #fef3c7; color: var(--warn); }
 .save-status.error   { background: #fee2e2; color: var(--err); }
 
-/* ---------- شبكة الأسئلة ---------- */
+/* ---------- Question grid ---------- */
 .nav-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -54,7 +54,7 @@
 .nav-btn.answered { background: var(--primary-soft); color: var(--primary-dark); border-color: #99f6e4; }
 .nav-btn.current { outline: 2px solid var(--primary); outline-offset: 1px; }
 
-/* نقطة صغيرة تعني: محفوظة على الجهاز ولم تصل الخادم بعد */
+/* A small dot meaning: saved on the device, not yet on the server */
 .nav-btn.pending::after {
   content: "";
   position: absolute;
@@ -78,7 +78,7 @@
 .bar { height: 6px; background: #eef2f7; border-radius: 999px; overflow: hidden; margin-top: 8px; }
 .bar > i { display: block; height: 100%; background: var(--primary); width: 0; transition: width .25s ease; }
 
-/* ---------- السؤال والخيارات ---------- */
+/* ---------- Question and options ---------- */
 .q-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
 .q-counter { font-size: 13px; color: var(--muted); }
 .q-text { font-size: 19px; font-weight: 600; margin: 0 0 22px; }
@@ -118,7 +118,7 @@
 }
 .q-actions .spacer { flex: 1; }
 
-/* ---------- النتيجة ---------- */
+/* ---------- Result ---------- */
 .score-ring {
   width: 150px; height: 150px;
   margin: 8px auto 18px;
@@ -137,7 +137,7 @@
 .result-lines { color: var(--muted); font-size: 14.5px; display: grid; gap: 4px; margin-bottom: 24px; }
 .result-lines b { color: var(--text); }
 
-/* ---------- التوست ---------- */
+/* ---------- Toast ---------- */
 .toast {
   position: fixed;
   bottom: 22px;

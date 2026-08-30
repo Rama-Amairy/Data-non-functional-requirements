@@ -2,12 +2,13 @@
 
 Route map (all paths are relative to ``/api/v1``):
 
-| Method | Path                          | Purpose                                    |
-|--------|-------------------------------|--------------------------------------------|
-| GET    | /health                       | Server and database liveness               |
-| POST   | /students/demo-login          | Phase-one login, returns the fixed ids      |
-| POST   | /exams/seed                   | Seed the demo data (idempotent)            |
+| Method | Path                          | Purpose                                     |
+|--------|-------------------------------|---------------------------------------------|
+| GET    | /health                       | Server and database liveness                |
+| POST   | /students/login               | Sign in by email, resume or open an attempt |
+| POST   | /exams/seed                   | Ensure the exam content exists (idempotent) |
 | GET    | /exams/{exam_id}              | Exam and its questions (no correct answers) |
+| POST   | /attempts/start               | Open a new attempt for a signed-in student  |
 | GET    | /attempts/{id}/answers        | Restore saved answers                       |
 | POST   | /attempts/{id}/save           | Batched autosave with version arbitration   |
 | POST   | /attempts/{id}/submit         | Submit and grade                            |

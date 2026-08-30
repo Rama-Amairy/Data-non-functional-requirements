@@ -1,12 +1,13 @@
-/* مسار الكتابة التفاؤلي.
+/* The optimistic write path.
  *
- * ثلاث مراحل لنقرة واحدة:
- *   0 ملي ثانية  — تحديث الحالة وطلاء الواجهة، قبل أي await
- *   ~2 ملي ثانية — التزام معاملة IndexedDB، وعندها فقط تُعرض "محفوظ على الجهاز"
- *   لاحقاً       — المزامنة مع الخادم، مؤجّلة ولا تحجب أحداً
+ * Three stages for a single click:
+ *   0 ms    — update state and paint the UI, before any await
+ *   ~2 ms   — the IndexedDB transaction commits, and only then is
+ *             "saved on this device" shown
+ *   later   — sync to the server, deferred and blocking nobody
  *
- * "محفوظ على الجهاز" ليست ادّعاءً: Store.put لا تُحلّ إلا عند tx.oncomplete.
- * التفاؤل هو في الطلاء وحده.
+ * "Saved on this device" is not a claim: Store.put only resolves at
+ * tx.oncomplete. The optimism lives in the painting alone.
  */
 
 import { CFG } from './config.js';
@@ -27,24 +28,26 @@ export async function selectAnswer(questionId, value) {
   };
   const started = performance.now();
 
-  /* 1) تفاؤلي: الطالب يرى اختياره فوراً، بلا انتظار قرص ولا شبكة. */
+  /* 1) Optimistic: the student sees the choice at once, waiting on neither
+     disk nor network. */
   state.answers[record.question_id] = record;
   answersChanged();
   logEvent('answer_selected', { question_id: record.question_id, version: record.version });
 
-  /* خط الأساس في المقارنة: لا نسخة محلية تُطمئن، والمؤشّر ينتظر ردّ الخادم. */
+  /* The comparison baseline: no reassuring local copy, and the indicator
+     waits for the server reply. */
   if (!CFG.useOptimistic) {
-    try { await Store.put('answers', record); } catch (_) { /* memory أو ممتلئ */ }
+    try { await Store.put('answers', record); } catch (_) { /* memory backend, or storage full */ }
     return flush({ reason: 'immediate' });
   }
 
-  /* 2) صادق: لا نقول "محفوظ" قبل أن تُثبَّت المعاملة فعلاً. */
+  /* 2) Honest: never say "saved" before the transaction has actually committed. */
   try {
     await Store.put('answers', record);
   } catch (error) {
     logEvent('local_write_fail', { question_id: record.question_id, error: error.message });
     setStatus('at_risk');
-    return;                       // لا تجدول مزامنة لشيء لم يُخزَّن
+    return;                       // do not schedule a sync for something unstored
   }
 
   const elapsedMs = Number((performance.now() - started).toFixed(2));
@@ -52,12 +55,12 @@ export async function selectAnswer(questionId, value) {
 
   logEvent('saved_local', {
     question_id: record.question_id,
-    ms: elapsedMs,                 // زمن الطمأنينة المحسوس
-    pending: pending.length,       // عمق الطابور، تقرأه اللوحة
+    ms: elapsedMs,                 // the perceived reassurance time
+    pending: pending.length,       // queue depth, read by the dashboard
   });
 
   setStatus('local', { pending: pending.length });
 
-  /* 3) الشبكة لاحقاً. */
+  /* 3) The network, later. */
   scheduleFlush(CFG.saveDebounceMs);
 }

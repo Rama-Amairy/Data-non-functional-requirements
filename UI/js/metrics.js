@@ -1,11 +1,12 @@
-/* سجلّ القياس الذي تقرأه لوحة المقارنة.
+/* The measurement log the comparison dashboard reads.
  *
- * الأحداث تُكتب دائماً في IndexedDB مهما كان محرّك التخزين المختار للإجابات،
- * لأنها أداة قياس لا جزء من الآلية الخاضعة للتجربة: لو خزّنّاها في الذاكرة
- * أثناء جولة خط الأساس لضاعت النتائج التي نريد مقارنتها بالضبط.
+ * Events always go to IndexedDB whatever storage backend was chosen for the
+ * answers, because they are the measuring instrument and not part of the
+ * mechanism under test: holding them in memory during a baseline run would
+ * lose exactly the results we set out to compare.
  *
- * BroadcastChannel يوصل الحدث إلى تبويب اللوحة فوراً، وIndexedDB يُبقيه بعد
- * تحديث الصفحة.
+ * BroadcastChannel delivers each event to the dashboard tab immediately, and
+ * IndexedDB keeps it across a page reload.
  */
 
 import { openIDB } from './store.js';
@@ -19,12 +20,12 @@ function eventsDb() {
 }
 
 let bus = null;
-try { bus = new BroadcastChannel('exam-metrics'); } catch (_) { /* متصفّح قديم */ }
+try { bus = new BroadcastChannel('exam-metrics'); } catch (_) { /* older browser */ }
 
 export function logEvent(type, payload = {}) {
   const event = { t: Date.now(), type, payload, profile: profileName() };
 
-  if (bus) { try { bus.postMessage(event); } catch (_) { /* تجاهل */ } }
+  if (bus) { try { bus.postMessage(event); } catch (_) { /* ignore */ } }
 
   return eventsDb().then((db) => {
     if (!db) return event;
@@ -39,15 +40,16 @@ export function logEvent(type, payload = {}) {
   }).catch(() => event);
 }
 
-/* استقبال رسائل اللوحة (تحديث الإعدادات حيّاً). BroadcastChannel لا يسلّم
-   الرسالة إلى مرسِلها، فصفحة الاختبار لا تستقبل أحداثها الخاصة. */
+/* Receives dashboard messages (live config updates). BroadcastChannel does not
+   deliver a message back to its sender, so the exam page never receives its own
+   events. */
 export function onBusMessage(handler) {
   if (!bus) return;
   bus.addEventListener('message', (event) => handler(event.data));
 }
 
 export function postBus(message) {
-  if (bus) { try { bus.postMessage(message); } catch (_) { /* تجاهل */ } }
+  if (bus) { try { bus.postMessage(message); } catch (_) { /* ignore */ } }
 }
 
 export async function readEvents() {

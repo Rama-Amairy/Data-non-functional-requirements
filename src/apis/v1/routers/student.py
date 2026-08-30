@@ -1,52 +1,53 @@
-"""Student endpoints.
+"""Student endpoints: signing in and opening a session.
 
-In phase one there is no authentication system yet, so login goes through a
-single demo endpoint that returns the fixed identifiers (student 1, exam 1,
-attempt 1).
+There is no password yet — the email is the identity. That is enough to keep
+each student on their own attempt, which is what recoverability needs: a
+student who reconnects has to land back on their own answers and nobody
+else's.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from src.apis.dependencies import DbSession
-from src.domain.models import ExamAttempt, Student
-from src.domain.schema import DemoLoginRequest, DemoLoginResponse
-from src.domain.services import DEMO_ATTEMPT_ID, DEMO_EXAM_ID, DEMO_STUDENT_ID, ensure_demo_data
+from src.domain.schema import LoginRequest, SessionOut
+from src.domain.services import ensure_exam, get_or_create_student, start_session
+from src.observability.loggers import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/students", tags=["students"])
 
 
-@router.post("/demo-login", response_model=DemoLoginResponse)
-def demo_login(request: DemoLoginRequest, db: DbSession) -> DemoLoginResponse:
-    """Demo login with the student name only.
+@router.post("/login", response_model=SessionOut)
+def login(request: LoginRequest, db: DbSession) -> SessionOut:
+    """Signs a student in and hands back the session they should continue into.
 
-    It does three things in one request so the front end does not need several
-    calls at startup: it makes sure the demo data exists, updates the demo
-    student's name with the one entered, then returns the identifiers and the
-    attempt state (``is_submitted``) so the front end can decide whether to show
-    the exam or go straight to the result page.
-
-    This endpoint will later be replaced by a real login with one attempt per
-    student.
+    One request does everything the front end needs at startup: it creates the
+    student the first time their email is seen, makes sure the exam content
+    exists, then either resumes their attempt in progress, creates a new one,
+    or reports that their attempt is already submitted.
     """
-    ensure_demo_data(db)
+    student = get_or_create_student(db, request.name, request.email)
+    exam = ensure_exam(db)
+    attempt, status = start_session(db, student, exam)
 
-    student = db.get(Student, DEMO_STUDENT_ID)
-    if student is None:
-        raise HTTPException(500, "تعذّر تجهيز الطالب التجريبي")
-    student.name = request.name
-
-    attempt = db.get(ExamAttempt, DEMO_ATTEMPT_ID)
-    if attempt is None:
-        raise HTTPException(500, "تعذّر تجهيز المحاولة التجريبية")
-
-    # The front end fetches the exam as soon as this returns, so the seeded
-    # rows have to be committed before the response leaves.
+    # The front end fetches the exam as soon as this returns, so the student and
+    # the attempt have to be committed before the response leaves.
     db.commit()
 
-    return DemoLoginResponse(
+    logger.info(
+        "login: student=%s attempt=%s status=%s", student.id, attempt.id, status
+    )
+
+    return SessionOut(
         student_id=student.id,
         student_name=student.name,
-        exam_id=DEMO_EXAM_ID,
+        student_email=student.email,
+        exam_id=exam.id,
+        exam_title=exam.title,
+        duration_minutes=exam.duration_minutes,
         attempt_id=attempt.id,
         is_submitted=bool(attempt.is_submitted),
+        status=status,
+        started_at=attempt.started_at,
     )

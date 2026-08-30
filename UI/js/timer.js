@@ -1,8 +1,8 @@
-/* العدّاد التنازلي.
+/* Countdown timer.
  *
- * الموعد النهائي يُثبَّت مرة واحدة ويُخزَّن محلياً، فتحديث الصفحة لا يمنح وقتاً
- * إضافياً. عند انتهاء الوقت يُطلق حدث exam:timeup بدل استدعاء التسليم مباشرةً،
- * تفادياً للاعتماد الدائري مع main.
+ * The deadline is fixed once and stored locally, so reloading the page does not
+ * hand out extra time. When time runs out an exam:timeup event is dispatched
+ * rather than calling submit directly, to avoid a cycle with main.
  */
 
 import { $ } from './dom.js';

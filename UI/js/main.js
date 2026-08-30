@@ -1,14 +1,15 @@
-/* نقطة الدخول: التقاط الأحداث وربط الوحدات ببعضها.
+/* Entry point: event wiring and joining the modules together.
  *
- * وسم <script type="module"> واحد في index.html يستورد هذا الملف، وهو يستورد
- * البقية. الوحدات مؤجّلة افتراضياً فتنفَّذ بعد جهوز DOM.
+ * A single <script type="module"> tag in index.html imports this file, and it
+ * imports the rest. Modules are deferred by default, so they run once the DOM
+ * is ready.
  */
 
-import { API_BASE, ATTEMPT_ID, CFG, profileName } from './config.js';
+import { API_BASE, CFG } from './config.js';
 import { api } from './api.js';
 import { $, showScreen, toast } from './dom.js';
 import { Store } from './store.js';
-import { state, answersChanged } from './state.js';
+import { state } from './state.js';
 import { setStatus } from './status.js';
 import { logEvent, onBusMessage } from './metrics.js';
 import {
@@ -18,28 +19,49 @@ import {
 import { renderExam, renderNav, renderQuestion, syncQuestionSelection } from './render.js';
 import { startTimer, stopTimer } from './timer.js';
 
-/* ---------------------- الإقلاع ---------------------- */
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
+
+/* Who signed in last, kept only to prefill the login form. It lives outside the
+   answers store on purpose: that store is wiped whenever the attempt changes,
+   and it holds exam data, which this is not. */
+const LAST_STUDENT_KEY = 'exam_last_student';
+
+function rememberStudent(name, email) {
+  try { localStorage.setItem(LAST_STUDENT_KEY, JSON.stringify({ name, email })); }
+  catch (_) { /* private browsing — the prefill is a convenience, not data */ }
+}
+
+function lastStudent() {
+  try { return JSON.parse(localStorage.getItem(LAST_STUDENT_KEY) || '{}'); }
+  catch (_) { return {}; }
+}
+
+/* ---------------------- Boot ---------------------- */
 
 async function boot() {
   state.storageBackend = await Store.init();
-  console.info(
-    `منصة الاختبارات — التخزين: ${state.storageBackend} · الملف التجريبي: ${profileName()}`,
-  );
 
-  const savedName = await Store.metaValue('studentName', '');
-  if (savedName) $('student-name').value = savedName;
+  const last = lastStudent();
+  if (last.name)  $('student-name').value  = last.name;
+  if (last.email) $('student-email').value = last.email;
 
   wireEvents();
   wireDashboardBridge();
   setStatus('idle');
 }
 
-/* ---------------------- بدء الاختبار ---------------------- */
+/* ---------------------- Signing in ---------------------- */
 
 async function startExam() {
-  const name = $('student-name').value.trim();
+  const name  = $('student-name').value.trim();
+  const email = $('student-email').value.trim();
+
   if (!name) {
     $('login-error').textContent = 'الرجاء إدخال اسم الطالب.';
+    return;
+  }
+  if (!EMAIL_PATTERN.test(email)) {
+    $('login-error').textContent = 'الرجاء إدخال بريد إلكتروني صحيح — هو ما يميّز كل طالب.';
     return;
   }
 
@@ -49,67 +71,105 @@ async function startExam() {
   $('login-error').textContent = '';
 
   try {
-    /* نداء واحد: يجهّز البيانات التجريبية، يحفظ الاسم، ويعيد المعرّفات. */
-    const session = await api(`${API_BASE}/students/demo-login`, {
+    /* One call: creates the student the first time this email is seen, makes
+       sure the exam exists, and returns the attempt this student continues
+       into — their own, never anybody else's. */
+    const session = await api(`${API_BASE}/students/login`, {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, email }),
     });
 
-    state.exam = await api(`${API_BASE}/exams/${session.exam_id}`);
-    state.studentName = session.student_name;
-    await Store.setMeta('studentName', state.studentName);
-
-    /* النسخة المحلية أولاً — تعمل حتى لو كان الخادم غير متاح. */
-    await loadLocalAnswers();
-    const localCount = Object.keys(state.answers).length;
-
-    /* ثم استعادة نسخة الخادم ودمجها: الإصدار الأعلى يفوز. */
-    let serverState = null;
-    try {
-      serverState = await api(`${API_BASE}/attempts/${ATTEMPT_ID}/answers`);
-      await mergeServerAnswers(serverState.answers);
-    } catch (_) {
-      toast('تعذّر جلب الإجابات من الخادم — تم استخدام النسخة المحليّة.');
-    }
-
-    if (serverState && serverState.is_submitted) {
-      const result = await api(`${API_BASE}/attempts/${ATTEMPT_ID}/result`);
-      await Store.clearSession();
-      showResult(result);
-      return;
-    }
-
-    /* الموعد النهائي يُثبَّت مرة واحدة: التحديث لا يمنح وقتاً إضافياً. */
-    state.deadline = await Store.metaValue('deadline', null)
-      || Date.now() + state.exam.duration_minutes * 60000;
-    await Store.setMeta('deadline', state.deadline);
-
-    logEvent('exam_started', {
-      storage: state.storageBackend,
-      restored_local: localCount,
-      restored_total: Object.keys(state.answers).length,
-    });
-
-    renderExam();
-    showScreen('exam');
-    startTimer();
-    startAutoSave();
-
-    const restored = Object.keys(state.answers).length;
-    if (restored > 0) {
-      toast(`تمت استعادة ${restored} إجابة محفوظة.`);
-      logEvent('restored', { n: restored });
-    }
-
-    const pending = await pendingAnswers();
-    if (pending.length > 0) flush({ reason: 'startup' });
-    else setStatus(restored > 0 ? 'synced' : 'idle', { at: Date.now() });
+    rememberStudent(session.student_name, session.student_email);
+    await openSession(session);
   } catch (error) {
     $('login-error').textContent = `تعذّر بدء الاختبار: ${error.message}`;
   } finally {
     button.disabled = false;
     button.textContent = 'ابدأ الاختبار';
   }
+}
+
+/* Opens a session returned by the server — from login or from a new attempt.
+   Everything downstream (autosave, restore, submission) addresses
+   state.attemptId, so binding it here is what keeps two students on this same
+   browser from ever touching each other's answers. */
+async function openSession(session) {
+  stopTimer();
+  stopAutoSave();
+
+  state.studentId    = session.student_id;
+  state.studentName  = session.student_name;
+  state.studentEmail = session.student_email;
+  state.examId       = session.exam_id;
+  state.attemptId    = session.attempt_id;
+  state.answers      = {};
+  state.index        = 0;
+  state.submitted    = false;
+  state.deadline     = null;
+
+  /* Bind the local store to this attempt before reading a single answer out of
+     it: a different attempt means the previous student's local copy is dropped. */
+  await Store.openSession(session.attempt_id);
+
+  state.exam = await api(`${API_BASE}/exams/${session.exam_id}`);
+
+  /* Already submitted: show the result instead of reopening a finished exam. */
+  if (session.is_submitted) {
+    const result = await api(`${API_BASE}/attempts/${state.attemptId}/result`);
+    await Store.clearSession();
+    showResult(result);
+    return;
+  }
+
+  /* The local copy first — this works even when the server is unreachable. */
+  await loadLocalAnswers();
+  const localCount = Object.keys(state.answers).length;
+
+  /* Then restore the server copy and merge it: the higher version wins. */
+  let serverState = null;
+  try {
+    serverState = await api(`${API_BASE}/attempts/${state.attemptId}/answers`);
+    await mergeServerAnswers(serverState.answers);
+  } catch (_) {
+    toast('تعذّر جلب الإجابات من الخادم — تم استخدام النسخة المحليّة.');
+  }
+
+  /* Submitted from another device while this one was away. */
+  if (serverState && serverState.is_submitted) {
+    const result = await api(`${API_BASE}/attempts/${state.attemptId}/result`);
+    await Store.clearSession();
+    showResult(result);
+    return;
+  }
+
+  /* The deadline is fixed once per attempt: reloading does not hand out extra
+     time, and a new attempt starts its own clock. */
+  state.deadline = await Store.metaValue('deadline', null)
+    || Date.now() + state.exam.duration_minutes * 60000;
+  await Store.setMeta('deadline', state.deadline);
+
+  logEvent('exam_started', {
+    storage: state.storageBackend,
+    attempt_id: state.attemptId,
+    session: session.status,
+    restored_local: localCount,
+    restored_total: Object.keys(state.answers).length,
+  });
+
+  renderExam();
+  showScreen('exam');
+  startTimer();
+  startAutoSave();
+
+  const restored = Object.keys(state.answers).length;
+  if (restored > 0) {
+    toast(`تمت استعادة ${restored} إجابة محفوظة.`);
+    logEvent('restored', { n: restored });
+  }
+
+  const pending = await pendingAnswers();
+  if (pending.length > 0) flush({ reason: 'startup' });
+  else setStatus(restored > 0 ? 'synced' : 'idle', { at: Date.now() });
 }
 
 async function loadLocalAnswers() {
@@ -120,7 +180,60 @@ async function loadLocalAnswers() {
   }
 }
 
-/* ---------------------- التسليم والنتيجة ---------------------- */
+/* ---------------------- A new attempt, and signing out ---------------------- */
+
+/* A retake for the same student. Login never does this on its own, so a reload
+   after submitting still shows the result rather than wiping it. */
+async function startNewAttempt() {
+  if (!state.studentId || !state.examId) {
+    signOut();
+    return;
+  }
+
+  const button = $('btn-retry');
+  button.disabled = true;
+  button.textContent = 'جاري التحضير...';
+
+  try {
+    const session = await api(`${API_BASE}/attempts/start`, {
+      method: 'POST',
+      body: JSON.stringify({ student_id: state.studentId, exam_id: state.examId }),
+    });
+    await openSession(session);
+  } catch (error) {
+    toast(`تعذّر بدء محاولة جديدة: ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'محاولة جديدة';
+  }
+}
+
+/* Back to the login screen so another student can sign in on this device. */
+function signOut() {
+  stopTimer();
+  stopAutoSave();
+
+  state.studentId = null;
+  state.attemptId = null;
+  state.examId    = null;
+  state.exam      = null;
+  state.answers   = {};
+  state.index     = 0;
+  state.submitted = false;
+  state.deadline  = null;
+
+  /* Clear the fields as well: leaving the previous email in place is how the
+     next student would silently land in somebody else's attempt. */
+  $('student-name').value = '';
+  $('student-email').value = '';
+  $('login-error').textContent = '';
+
+  setStatus('idle');
+  showScreen('login');
+  $('student-name').focus();
+}
+
+/* ---------------------- Submission and result ---------------------- */
 
 async function submitExam({ auto = false } = {}) {
   if (state.submitted) return;
@@ -139,7 +252,7 @@ async function submitExam({ auto = false } = {}) {
   button.disabled = true;
   button.textContent = 'جاري التسليم...';
 
-  /* لا تسلّم قبل التأكد من وصول آخر الإجابات. */
+  /* Do not submit before confirming the latest answers have landed. */
   const flushed = await flush({ reason: 'submit' });
   if (!flushed
       && !confirm('تعذّر حفظ بعض الإجابات. المتابعة قد تُفقدها — هل تريد التسليم؟')) {
@@ -149,11 +262,15 @@ async function submitExam({ auto = false } = {}) {
   }
 
   try {
-    const result = await api(`${API_BASE}/attempts/${ATTEMPT_ID}/submit`, { method: 'POST' });
+    const result = await api(`${API_BASE}/attempts/${state.attemptId}/submit`, { method: 'POST' });
     state.submitted = true;
     stopTimer();
     stopAutoSave();
-    logEvent('submitted', { correct: result.correct_count, answered: result.answered_count });
+    logEvent('submitted', {
+      attempt_id: state.attemptId,
+      correct: result.correct_count,
+      answered: result.answered_count,
+    });
     await Store.clearSession();
     showResult(result);
   } catch (error) {
@@ -165,7 +282,9 @@ async function submitExam({ auto = false } = {}) {
 
 function showResult(result) {
   state.submitted = true;
-  $('result-student').textContent = state.studentName ? `الطالب: ${state.studentName}` : '';
+  $('result-student').textContent = state.studentName
+    ? `الطالب: ${state.studentName} · ${state.studentEmail}`
+    : '';
   $('res-correct').textContent = result.correct_count;
   $('res-total').textContent = result.total_questions;
   $('res-answered').textContent = result.answered_count;
@@ -179,9 +298,10 @@ function showResult(result) {
   showScreen('result');
 }
 
-/* ---------------------- جسر لوحة المقارنة ----------------------
-   اللوحة تبثّ تعديلات الإعدادات، فتُطبَّق هنا حيّاً دون تحديث الصفحة. القيم
-   البنيوية (محرّك التخزين ومفاتيح A/B) تحتاج إعادة تحميل، فلا تُطبَّق هنا. */
+/* ---------------------- Dashboard bridge ----------------------
+   The dashboard broadcasts config changes, which are applied here live without
+   a page reload. Structural values (the storage backend and the A/B switches)
+   need a reload, so they are not applied here. */
 
 const LIVE_KNOBS = [
   'autosaveIntervalMs', 'saveDebounceMs', 'syncingDelayMs', 'requestTimeoutMs',
@@ -207,11 +327,13 @@ function wireDashboardBridge() {
   });
 }
 
-/* ---------------------- ربط الأحداث ---------------------- */
+/* ---------------------- Event wiring ---------------------- */
 
 function wireEvents() {
   $('btn-start').addEventListener('click', startExam);
-  $('student-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') startExam(); });
+  for (const id of ['student-name', 'student-email']) {
+    $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') startExam(); });
+  }
 
   $('btn-prev').addEventListener('click', () => {
     if (state.index > 0) { state.index -= 1; renderQuestion(); renderNav(); }
@@ -224,9 +346,10 @@ function wireEvents() {
 
   $('btn-save-now').addEventListener('click', () => flush({ reason: 'manual' }));
   $('btn-submit').addEventListener('click', () => submitExam());
-  $('btn-restart').addEventListener('click', () => location.reload());
+  $('btn-retry').addEventListener('click', startNewAttempt);
+  $('btn-signout').addEventListener('click', signOut);
 
-  /* إعادة الرسم بعد أي تغيير في الإجابات أو في حالة مزامنتها. */
+  /* Repaint after any change to the answers or to their sync state. */
   document.addEventListener('answers:changed', () => {
     renderNav();
     syncQuestionSelection();
@@ -237,7 +360,7 @@ function wireEvents() {
     submitExam({ auto: true });
   });
 
-  /* إشارات الشبكة: استأنف الحفظ فور عودة الاتصال. */
+  /* Network signals: resume saving as soon as the connection returns. */
   window.addEventListener('online', () => {
     logEvent('browser_online', {});
     toast('عاد الاتصال — تجري إعادة المزامنة.');
@@ -246,11 +369,14 @@ function wireEvents() {
   window.addEventListener('offline', () => {
     logEvent('browser_offline', {});
     pendingAnswers().then((pending) => {
-      setStatus('offline', { pending: pending.length, retryIn: CFG.retryBaseMs });
+      setStatus('offline', {
+        pending: pending.length,
+        retryIn: CFG.useAutosave ? CFG.retryBaseMs : null,
+      });
     });
   });
 
-  /* التبويب المخفي تُخنق فيه المؤقتات، فنصرّف عند العودة إليه. */
+  /* Timers are throttled in a hidden tab, so flush when it comes back. */
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushOnExit();
     else if (!state.submitted && state.exam) flush({ reason: 'visible' });

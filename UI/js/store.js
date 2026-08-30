@@ -1,22 +1,23 @@
-/* طبقة التخزين المحلي.
+/* The local storage layer.
  *
- * المحرّك الافتراضي IndexedDB، ومعه مساران احتياطيان: localStorage (للتصفّح
- * الخاص أو عند حجب IndexedDB) وmemory (خط الأساس في تجربة المقارنة: لا نسخة
- * محلية إطلاقاً).
+ * IndexedDB is the default backend, with two fallbacks behind it: localStorage
+ * (for private browsing, or when IndexedDB is blocked) and memory (the baseline
+ * of the comparison experiment: no local copy at all).
  *
- * نقطة جوهرية: عملية الكتابة لا تُحلّ إلا عند tx.oncomplete، أي عند التزام
- * المعاملة فعلاً على القرص — لا عند استدعاء put(). هذا ما يجعل رسالة
- * "محفوظ على الجهاز" صادقة لا مجرّد تفاؤل.
+ * The essential point: a write only resolves at tx.oncomplete, that is once the
+ * transaction has actually committed to disk — not when put() is called. That
+ * is what makes the "saved on this device" message truthful rather than merely
+ * optimistic.
  */
 
-import { CFG, ATTEMPT_ID } from './config.js';
+import { CFG } from './config.js';
 
 const DB_NAME    = 'exam_platform';
 const DB_VERSION = 1;
-const LEGACY_KEY = `exam_platform_attempt_${ATTEMPT_ID}`;
 const LS_PREFIX  = 'exam_store_';
 
-/* تُستخدم من store.js ومن metrics.js معاً، فكل المخازن تُنشأ هنا دفعة واحدة. */
+/* Used by both store.js and metrics.js, so every object store is created here
+   in one go. */
 export function openIDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -46,7 +47,7 @@ function idbBackend(db) {
     const tx = db.transaction(store, mode);
     const request = action(tx.objectStore(store));
     if (request) request.onsuccess = () => { value = request.result; };
-    tx.oncomplete = () => resolve(value);       // الالتزام الفعلي، لا مجرّد الطلب
+    tx.oncomplete = () => resolve(value);       // the actual commit, not just the request
     tx.onerror    = () => reject(tx.error);
     tx.onabort    = () => reject(tx.error || new Error('أُجهضت المعاملة'));
   });
@@ -113,46 +114,36 @@ export const Store = {
     }
     if (CFG.storage === 'localstorage') {
       this.backend = localBackend();
-      await this.migrateLegacy();
       return this.backend.name;
     }
 
     try {
       this.backend = idbBackend(await openIDB());
-    } catch (error) {
-      console.warn('تعذّر فتح IndexedDB — السقوط إلى localStorage:', error.message);
+    } catch (_) {
+      /* IndexedDB is unavailable (private browsing, blocked, or held by another
+         tab) — fall back so the student still keeps a local copy. */
       this.backend = localBackend();
     }
-    await this.migrateLegacy();
     return this.backend.name;
   },
 
-  /* ترحيل لمرة واحدة من المفتاح القديم، حتى لا يخسر طالب في منتصف اختبار
-     إجاباته عند نشر النسخة الجديدة. */
-  async migrateLegacy() {
-    let legacy = null;
-    try { legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null'); }
-    catch (_) { return; }
-    if (!legacy) return;
+  /* Binds the local store to one attempt.
 
-    try {
-      for (const [questionId, old] of Object.entries(legacy.answers || {})) {
-        if (!old || !old.value) continue;
-        await this.put('answers', {
-          question_id: Number(questionId),
-          value: old.value,
-          version: old.version || 1,
-          sync: old.synced ? 'synced' : 'local',
-          updated_at: legacy.savedAt || Date.now(),
-        });
-      }
-      if (legacy.studentName) await this.put('meta', { key: 'studentName', value: legacy.studentName });
-      if (legacy.deadline)    await this.put('meta', { key: 'deadline',    value: legacy.deadline });
-      localStorage.removeItem(LEGACY_KEY);
-      console.info('تم ترحيل النسخة المحلية القديمة إلى', this.backend.name);
-    } catch (error) {
-      console.warn('فشل الترحيل من النسخة القديمة:', error.message);
+     Two students share one browser profile, so the answers cached for the
+     previous attempt must not leak into the next one: switching attempts wipes
+     the local copy before a single answer is read. Reopening the *same*
+     attempt keeps everything, which is the whole point of the local copy. */
+  async openSession(attemptId) {
+    const previous = await this.metaValue('attemptId', null);
+    const sameAttempt = previous === attemptId;
+
+    if (!sameAttempt) {
+      await this.clear('answers');
+      await this.clear('meta');
     }
+
+    await this.setMeta('attemptId', attemptId);
+    return sameAttempt;
   },
 
   put(store, record) { return this.backend.put(store, record); },
@@ -161,7 +152,8 @@ export const Store = {
   del(store, key)    { return this.backend.del(store, key); },
   clear(store)       { return this.backend.clear(store); },
 
-  /* تُستدعى بعد التسليم — سجلّ الأحداث يبقى لأن اللوحة تقرأه. */
+  /* Called after submission — the event log stays, because the dashboard
+     reads it. */
   async clearSession() {
     await this.clear('answers');
     await this.clear('meta');

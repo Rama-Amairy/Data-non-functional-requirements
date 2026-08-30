@@ -1,4 +1,4 @@
-/* لوحة قياس آليات التعافي — تمتدّ على tokens.css و base.css نفسيهما. */
+/* The recovery measurement dashboard — extends the same tokens.css and base.css. */
 
 body { background: var(--bg); }
 
@@ -44,7 +44,7 @@ body { background: var(--bg); }
 }
 section.panel { margin-bottom: 20px; }
 
-/* ---------- صف الضبط ---------- */
+/* ---------- Controls row ---------- */
 .presets { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
 .presets .btn { padding: 8px 16px; font-size: 13.5px; }
 
@@ -85,7 +85,7 @@ section.panel { margin-bottom: 20px; }
 .actions .btn { padding: 9px 18px; font-size: 13.5px; }
 .reload-note { font-size: 12.5px; color: var(--warn); }
 
-/* ---------- بطاقات المقاييس ---------- */
+/* ---------- Metric tiles ---------- */
 .tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
@@ -112,7 +112,7 @@ section.panel { margin-bottom: 20px; }
 .tile.bad  .v { color: var(--err); }
 .tile.warn .v { color: var(--warn); }
 
-/* ---------- المخطّط ---------- */
+/* ---------- Chart ---------- */
 .chart-wrap { position: relative; }
 .chart-wrap svg { display: block; width: 100%; height: auto; }
 .chart-empty {
@@ -149,7 +149,7 @@ section.panel { margin-bottom: 20px; }
 .tooltip.show { opacity: .96; }
 .tooltip b { font-variant-numeric: tabular-nums; }
 
-/* ---------- الجداول ---------- */
+/* ---------- Tables ---------- */
 .table-wrap { overflow-x: auto; }
 table.data {
   width: 100%;

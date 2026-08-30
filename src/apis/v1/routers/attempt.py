@@ -9,20 +9,68 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from src.apis.dependencies import DbSession, get_attempt_or_404
-from src.domain.models import Answer
+from src.domain.models import Answer, Exam, Student
 from src.domain.schema import (
     AttemptAnswersOut,
     BulkSaveRequest,
     SavedAnswerOut,
     SaveResponse,
     ScoreOut,
+    SessionOut,
+    StartAttemptRequest,
 )
-from src.domain.services import calculate_score
+from src.domain.services import calculate_score, create_attempt, find_open_attempt
 from src.observability.loggers import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/attempts", tags=["attempts"])
+
+
+@router.post("/start", response_model=SessionOut)
+def start_attempt(request: StartAttemptRequest, db: DbSession) -> SessionOut:
+    """Opens a new attempt for a student who has already signed in (a retake).
+
+    Login never starts a retake on its own — reloading the page after
+    submitting has to show the result, not silently wipe it — so a new attempt
+    is only ever created through this explicit request.
+
+    If the student still has an attempt in progress, that one is returned
+    instead of a second open attempt: pressing the button twice must not split
+    the answers across two rows.
+    """
+    student = db.get(Student, request.student_id)
+    if student is None:
+        raise HTTPException(404, "الطالب غير موجود")
+
+    exam = db.get(Exam, request.exam_id)
+    if exam is None:
+        raise HTTPException(404, "الاختبار غير موجود")
+
+    attempt = find_open_attempt(db, student.id, exam.id)
+    status = "resumed"
+    if attempt is None:
+        attempt = create_attempt(db, student.id, exam.id)
+        status = "new"
+
+    # The browser starts saving answers into this attempt right away, so the row
+    # has to be durable before the response leaves.
+    db.commit()
+
+    logger.info("attempt %s opened for student %s (%s)", attempt.id, student.id, status)
+
+    return SessionOut(
+        student_id=student.id,
+        student_name=student.name,
+        student_email=student.email,
+        exam_id=exam.id,
+        exam_title=exam.title,
+        duration_minutes=exam.duration_minutes,
+        attempt_id=attempt.id,
+        is_submitted=bool(attempt.is_submitted),
+        status=status,
+        started_at=attempt.started_at,
+    )
 
 
 @router.get("/{attempt_id}/answers", response_model=AttemptAnswersOut)
@@ -74,6 +122,11 @@ def save_answers(
     batch after a network failure does not corrupt the data, and an old batch
     arriving late after the connection returns cannot overwrite a newer answer.
     """
+    if request.attempt_id != attempt_id:
+        # A tab left open from an earlier session would otherwise write one
+        # student's answers into another student's attempt.
+        raise HTTPException(400, "رقم المحاولة في الطلب لا يطابق المسار")
+
     attempt = get_attempt_or_404(attempt_id, db)
     if attempt.is_submitted:
         raise HTTPException(409, "تم تسليم هذه المحاولة، لا يمكن تعديل الإجابات")

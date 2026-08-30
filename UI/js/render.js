@@ -1,7 +1,8 @@
-/* رسم الاختبار: شبكة الأسئلة، السؤال الحالي، شريط التقدّم.
+/* Rendering the exam: the question grid, the current question, the progress bar.
  *
- * هذه الوحدة تستورد selectAnswer، وanswers.js لا يستورد منها شيئاً — الاتجاه
- * أحادي، والتحديث يعود عبر حدث answers:changed الذي يلتقطه main.
+ * This module imports selectAnswer, and answers.js imports nothing from it —
+ * the direction is one-way, and updates come back through the answers:changed
+ * event that main listens for.
  */
 
 import { $ } from './dom.js';
@@ -89,7 +90,7 @@ export function renderQuestion() {
   $('btn-next').disabled = state.index === questions.length - 1;
 }
 
-/* تحديث الاختيار دون إعادة بناء الخيارات — يحافظ على تركيز لوحة المفاتيح. */
+/* Updates the selection without rebuilding the options — keeps keyboard focus. */
 export function syncQuestionSelection() {
   if (!state.exam) return;
   const question = state.exam.questions[state.index];

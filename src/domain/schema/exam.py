@@ -1,8 +1,8 @@
-"""Schemas for the exam, its questions, and the demo login."""
+"""Schemas for the exam and its questions."""
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class QuestionOut(BaseModel):
@@ -24,29 +24,11 @@ class ExamOut(BaseModel):
 
 
 class SeedResponse(BaseModel):
-    """Result of seeding the demo data."""
+    """Result of making sure the exam content exists."""
 
     status: str
     exam_id: int
-    attempt_id: int
-    student_id: int
     questions_count: int
-
-
-class DemoLoginRequest(BaseModel):
-    """Phase-one login request: the student name only."""
-
-    name: str = Field(min_length=1, max_length=100)
-
-
-class DemoLoginResponse(BaseModel):
-    """The identifiers the front end needs in order to start the exam."""
-
-    student_id: int
-    student_name: str
-    exam_id: int
-    attempt_id: int
-    is_submitted: bool
 
 
 class HealthResponse(BaseModel):

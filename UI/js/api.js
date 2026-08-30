@@ -1,14 +1,16 @@
-/* غلاف fetch: مهلة زمنية صريحة + حقن الأعطال للتجربة.
+/* fetch wrapper: an explicit timeout plus fault injection for the experiment.
  *
- * حقن الأعطال يعمل فقط عندما يمرّر المستدعي chaos: true، أي على مسار الحفظ
- * والنبض دون تسجيل الدخول وجلب الاختبار — حتى لا تفشل بداية الجلسة عشوائياً.
+ * Fault injection only applies when the caller passes chaos: true — that is, on
+ * the save and probe paths but not on login or fetching the exam, so a session
+ * can never fail to start at random.
  */
 
 import { CFG } from './config.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/* خطأ شبكة أو مهلة — يميّزه المؤشّر عن خطأ يردّه الخادم فعلاً. */
+/* A network or timeout error — the indicator tells it apart from an error
+   the server actually replied with. */
 export class NetworkError extends Error {
   constructor(message) { super(message); this.name = 'NetworkError'; }
 }
@@ -36,7 +38,7 @@ export async function api(path, options = {}) {
 
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
-      try { detail = (await res.json()).detail || detail; } catch (_) { /* ردّ بلا JSON */ }
+      try { detail = (await res.json()).detail || detail; } catch (_) { /* response carried no JSON */ }
       const error = new Error(detail);
       error.status = res.status;
       throw error;
@@ -47,7 +49,7 @@ export async function api(path, options = {}) {
     if (error.name === 'AbortError') {
       throw new NetworkError(`انتهت المهلة بعد ${timeout} ملي ثانية`);
     }
-    if (error instanceof TypeError) {          // فشل الشبكة يصل هكذا من fetch
+    if (error instanceof TypeError) {          // how fetch reports a network failure
       throw new NetworkError('تعذّر الوصول إلى الخادم');
     }
     throw error;
