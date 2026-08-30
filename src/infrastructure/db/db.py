@@ -14,43 +14,43 @@ class Base(DeclarativeBase):
 
     pass
 
-
 class DatabaseManager:
     """Manages the database engine lifecycle and session creation."""
 
-    def __init__(self, db_url: str):
-        self.db_url = db_url
-        # 1. Initialize engine
-        self.engine = create_engine(
-            self.db_url,
-            connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
-            echo=DB_ECHO,
-            # pool_pre_ping: checks a connection before using it and replaces
-            # dead connections automatically. This is what lets the application
-            # recover on its own after the database server restarts, without
-            # restarting the application server.
-            pool_pre_ping=True,
-            pool_recycle=1800,
-        )
-        # 2. Configure SessionFactory
-        self._session_factory = sessionmaker(
-            autocommit=False,
-            autoflush=False,
-            bind=self.engine,
-            # Endpoints commit explicitly and then keep reading the same
-            # objects to build their response; expiring on commit would send
-            # every one of those attribute reads back to the database.
-            expire_on_commit=False,
-        )
+    def __init__(self, database_url: str) -> None:
+        """Initializes the database engine and session factory."""
 
-    def create_db_and_tables(self) -> None:
-        """Utility to create all tables directly (useful for local dev/testing without Alembic)."""
-        # Imported here (not at the top of the file) so every model is
-        # registered in ``Base.metadata`` before creation, and without making
-        # the infrastructure layer depend on the domain layer.
-        import src.domain.models  # noqa: F401
+        self.db_url = database_url
 
-        Base.metadata.create_all(bind=self.engine)
+        # 1. Build connection arguments based on the database type
+        connect_args = {}
+
+        # Force the driver to only accept connections to the Primary node
+        # This handles the automatic failover if the primary node crashes
+        connect_args["target_session_attrs"] = "read-write"
+        connect_args["connect_timeout"] = 5
+
+        # Initialize the SQLAlchemy engine with the given database URL and connection arguments
+        try:
+            self.engine = create_engine(
+                self.db_url,
+                connect_args=connect_args,
+                echo=False,  # Set your DB_ECHO variable here
+                # pool_pre_ping is critical for HA: it checks the connection
+                # before using it and silently replaces it if the database restarted
+                pool_pre_ping=True,
+                pool_recycle=1800,
+            )
+
+            # 3. Configure SessionFactory
+            self._session_factory = sessionmaker(
+                autocommit=False,
+                autoflush=False,
+                bind=self.engine,
+                expire_on_commit=False,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize the database engine: {e}") from e
 
     def ping(self) -> bool:
         """Checks that the database is alive and answers a simple query."""

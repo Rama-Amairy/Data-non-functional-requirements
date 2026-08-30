@@ -1,0 +1,76 @@
+services:
+  etcd:
+    image: bitnamilegacy/etcd:3.5.9-debian-11-r99
+    environment:
+      # Allow etcd to run without auth for local development/testing
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+    networks:
+      - pg_network
+
+  pg_node_1:
+    image: bitnamilegacy/postgresql-repmgr:16.6.0-debian-12-r3
+    environment:
+      # Database credentials
+      - POSTGRESQL_POSTGRES_PASSWORD=admin_password
+      - POSTGRESQL_USERNAME=custom_user
+      - POSTGRESQL_PASSWORD=user_password
+      - POSTGRESQL_DATABASE=app_db
+      # Replication and HA settings
+      - REPMGR_PASSWORD=repmgr_password
+      - REPMGR_PARTNER_NODES=pg_node_1,pg_node_2
+      - REPMGR_PRIMARY_HOST=pg_node_1
+      - REPMGR_NODE_NETWORK_NAME=pg_node_1
+      - REPMGR_NODE_NAME=node-1
+      - REPMGR_NODE_ID=1
+      # Use SCRAM instead of MD5 in the auto-generated pg_hba.conf
+      - POSTGRESQL_PGHBA_AUTH_METHOD=scram-sha-256
+    ports:
+      - "5434:5432"
+    volumes:
+      - pg_data_1:/bitnami/postgresql
+      # Extra settings layered on top of the auto-generated postgresql.conf
+      # (included via its conf.d directory, so repmgr's own required settings
+      # such as shared_preload_libraries are kept intact)
+      - ./config/postgresql.conf:/bitnami/postgresql/conf/conf.d/custom.conf:ro
+    networks:
+      - pg_network
+    depends_on:
+      - etcd
+
+  pg_node_2:
+    image: bitnamilegacy/postgresql-repmgr:16.6.0-debian-12-r3
+    environment:
+      - POSTGRESQL_POSTGRES_PASSWORD=admin_password
+      - POSTGRESQL_USERNAME=custom_user
+      - POSTGRESQL_PASSWORD=user_password
+      - POSTGRESQL_DATABASE=app_db
+      - REPMGR_PASSWORD=repmgr_password
+      - REPMGR_PARTNER_NODES=pg_node_1,pg_node_2
+      - REPMGR_PRIMARY_HOST=pg_node_1
+      - REPMGR_NODE_NETWORK_NAME=pg_node_2
+      - REPMGR_NODE_NAME=node-2
+      - REPMGR_NODE_ID=2
+      # Use SCRAM instead of MD5 in the auto-generated pg_hba.conf
+      - POSTGRESQL_PGHBA_AUTH_METHOD=scram-sha-256
+    ports:
+      # Exposed on 5433 to avoid port conflict on the host machine
+      - "5433:5432"
+    volumes:
+      - pg_data_2:/bitnami/postgresql
+      - ./config/postgresql.conf:/bitnami/postgresql/conf/conf.d/custom.conf:ro
+    networks:
+      - pg_network
+    depends_on:
+      - pg_node_1
+
+networks:
+  pg_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  pg_data_1:
+  pg_data_2:
